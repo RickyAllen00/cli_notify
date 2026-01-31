@@ -1,2 +1,4 @@
 Set oShell = CreateObject("WScript.Shell")
-oShell.Run "powershell -STA -NoProfile -ExecutionPolicy Bypass -File ""C:\Users\Administrator\bin\notify-tray.ps1""", 0, False
+Set fso = CreateObject("Scripting.FileSystemObject")
+scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+oShell.Run "powershell -STA -NoProfile -ExecutionPolicy Bypass -File """ & scriptDir & "\notify-tray.ps1""", 0, False
