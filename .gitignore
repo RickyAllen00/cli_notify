@@ -1,0 +1,14 @@
+# logs
+*.log
+
+# local state
+codex-raw-last.txt
+telegram.offset
+session-map.json
+
+# env
+.env
+
+# OS
+Thumbs.db
+.DS_Store
