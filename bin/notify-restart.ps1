@@ -10,6 +10,13 @@ $telegramVbs = Join-Path $bin "telegram-bridge.vbs"
 $serverVbs = Join-Path $bin "notify-server.vbs"
 $codexWatch = Join-Path $bin "codex-watch.ps1"
 
+if (-not $env:NOTIFY_CONFIG_PATH) {
+  try {
+    $reg = Get-ItemProperty -Path "HKCU:\Environment" -Name "NOTIFY_CONFIG_PATH" -ErrorAction SilentlyContinue
+    if ($reg -and $reg.NOTIFY_CONFIG_PATH) { $env:NOTIFY_CONFIG_PATH = $reg.NOTIFY_CONFIG_PATH }
+  } catch {}
+}
+
 function Write-Info {
   param([string]$msg)
   if (-not $Quiet) { Write-Host $msg }
