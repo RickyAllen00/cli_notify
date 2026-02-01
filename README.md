@@ -56,6 +56,14 @@ NOTIFY_SERVER_PORT=9412
 1) `NOTIFY_CONFIG_PATH` 指定的路径  
 2) 脚本同目录下的 `.env` / `notify.yml` / `notify.yaml`
 
+**生成随机 Token（可选）**
+```powershell
+# 生成 32 字节随机 Token（Base64）
+$bytes = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+[Convert]::ToBase64String($bytes)
+```
+
 ### 4) 安装 BurntToast（仅 Windows 通知需要）
 ```powershell
 Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
@@ -153,6 +161,35 @@ curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remo
   --token "<你的Token>" \
   --host "<如 gpu-1 / prod-nyc / 192.168.1.23>"
 ```
+如果服务器需要密码，请先 `ssh` 登录再执行上述命令。
+
+### 批量配置（免密 SSH）
+```powershell
+$servers = @(
+  @{ user="zwb"; host="192.168.101.35"; label="lab-35" },
+  @{ user="ubuntu"; host="1.2.3.4"; label="gpu-1" }
+)
+
+$cmd = 'curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remote/install-codex-notify.sh | bash -s -- --url "http://<你的Windows主机IP>:9412/notify" --token "<你的Token>" --host "{0}"'
+
+foreach ($s in $servers) {
+  ssh "$($s.user)@$($s.host)" ($cmd -f $s.label)
+}
+```
+
+---
+
+## 迁移到新 Windows / 更换 Windows IP
+如果你更换了通知主机（或 IP 变化）：
+1) 在新 Windows 设备完成“从零部署”的全部步骤，并启动 `notify-server.vbs`。
+2) 所有 Linux 服务器重新执行一键安装命令，更新 `--url`：
+```bash
+curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remote/install-codex-notify.sh | bash -s -- \
+  --url "http://<新Windows主机IP>:9412/notify" \
+  --token "<你的Token>" \
+  --host "<当前服务器标识>"
+```
+3) 如果你更新了 Token，确保新 Windows 与所有服务器的 Token 保持一致。
 
 ---
 
