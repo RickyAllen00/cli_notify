@@ -133,7 +133,7 @@ wscript.exe "$env:USERPROFILE\bin\notify-server.vbs"
 1) 复制脚本到服务器
 ```bash
 mkdir -p ~/bin
-curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/main/remote/codex-notify.sh -o ~/bin/codex-notify.sh
+curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remote/codex-notify.sh -o ~/bin/codex-notify.sh
 chmod +x ~/bin/codex-notify.sh
 ```
 
@@ -148,8 +148,9 @@ export CODEX_NOTIFY_HOST="192.168.101.35"
 
 3) 在 `~/.codex/config.toml` 增加：
 ```toml
-notify = ["/bin/bash","-lc","~/bin/codex-notify.sh"]
+notify = ["/bin/bash","/home/<user>/bin/codex-notify.sh"]
 ```
+> 注意：`config.toml` 不会展开 `~`，请使用绝对路径。
 
 完成后，Linux 上的 Codex 每轮结束都会推送到 Windows，并复用你现有的 Telegram/企微配置。
 
@@ -158,7 +159,7 @@ notify = ["/bin/bash","-lc","~/bin/codex-notify.sh"]
 ## 多台服务器快速配置
 已安装 Codex 的服务器可以执行以下一条命令完成安装与配置：
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/main/remote/install-codex-notify.sh | bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remote/install-codex-notify.sh | bash -s -- \
   --url "http://<你的Windows主机IP>:9412/notify" \
   --token "<你的Token>" \
   --host "<当前服务器标识>"

@@ -80,8 +80,13 @@ fi
 : "${WINDOWS_NOTIFY_TOKEN:?missing WINDOWS_NOTIFY_TOKEN}"
 
 payload="${1:-}"
+if [ -z "$payload" ] && [ ! -t 0 ]; then
+  if IFS= read -r -t 0.2 payload; then
+    :
+  fi
+fi
 if [ -z "$payload" ]; then
-  payload="$(cat)"
+  payload="{}"
 fi
 host="${CODEX_NOTIFY_HOST:-$(hostname)}"
 source="${CODEX_NOTIFY_SOURCE:-Codex}"

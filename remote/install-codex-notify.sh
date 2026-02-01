@@ -124,7 +124,15 @@ fi
 : "${WINDOWS_NOTIFY_URL:?missing WINDOWS_NOTIFY_URL}"
 : "${WINDOWS_NOTIFY_TOKEN:?missing WINDOWS_NOTIFY_TOKEN}"
 
-payload="$(cat)"
+payload="${1:-}"
+if [ -z "$payload" ] && [ ! -t 0 ]; then
+  if IFS= read -r -t 0.2 payload; then
+    :
+  fi
+fi
+if [ -z "$payload" ]; then
+  payload="{}"
+fi
 host="${CODEX_NOTIFY_HOST:-$(hostname)}"
 source="${CODEX_NOTIFY_SOURCE:-Codex}"
 
@@ -159,7 +167,7 @@ upsert CODEX_NOTIFY_SOURCE "$CODEX_NOTIFY_SOURCE"
 if [ "$SKIP_HOOK" -eq 0 ]; then
   mkdir -p "$HOME/.codex"
   cfg="$HOME/.codex/config.toml"
-  notify_line='notify = ["/bin/bash","-lc","~/bin/codex-notify.sh"]'
+  notify_line="notify = [\"/bin/bash\",\"$HOME/bin/codex-notify.sh\"]"
   if [ -f "$cfg" ]; then
     top_notify="$(awk '/^[[:space:]]*\\[/{exit} /^[[:space:]]*notify[[:space:]]*=/{print \"yes\"; exit}' "$cfg")"
     if [ -z "$top_notify" ]; then
