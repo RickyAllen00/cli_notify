@@ -1,6 +1,20 @@
 ﻿#requires -Version 5.1
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -Namespace Win32 -Name ConsoleWindow -MemberDefinition @"
+[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+[DllImport("kernel32.dll")] public static extern bool FreeConsole();
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+"@
+
+# Hide/detach any console window to prevent taskbar flashes
+try {
+  $hwnd = [Win32.ConsoleWindow]::GetConsoleWindow()
+  if ($hwnd -ne [IntPtr]::Zero) {
+    [Win32.ConsoleWindow]::ShowWindow($hwnd, 0) | Out-Null
+    [Win32.ConsoleWindow]::FreeConsole() | Out-Null
+  }
+} catch {}
 
 $bin = Split-Path -Parent $MyInvocation.MyCommand.Path
 $flagAll = Join-Path $bin "notify.disabled"
@@ -16,6 +30,22 @@ $logFile = Join-Path $logDir "tray.log"
 function Write-TrayLog {
   param([string]$msg)
   try { Add-Content -Path $logFile -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + " " + $msg) } catch {}
+}
+
+# Single-instance guard (per-user)
+$mutex = $null
+$mutexCreated = $false
+try {
+  $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  $mutexName = "Local\\NotifyTray-" + $sid
+  $mutex = New-Object System.Threading.Mutex($true, $mutexName, [ref]$mutexCreated)
+} catch {
+  # If mutex can't be created, proceed without single-instance protection
+  $mutexCreated = $true
+}
+if (-not $mutexCreated) {
+  Write-TrayLog "tray already running"
+  return
 }
 
 function Get-NotifyStatus {
@@ -168,10 +198,16 @@ try {
     & $notifyScript -Source "GUI" $testPayload
   })
 
-  $exitItem.Add_Click({
-    $icon.Visible = $false
-    [System.Windows.Forms.Application]::Exit()
-  })
+  function Quit-Tray {
+    try { $icon.Visible = $false } catch {}
+    try { $menuTimer.Stop(); $menuTimer.Dispose() } catch {}
+    try { $menu.Dispose() } catch {}
+    try { $icon.Dispose() } catch {}
+    try { $form.Close(); $form.Dispose() } catch {}
+    try { [System.Windows.Forms.Application]::ExitThread() } catch {}
+  }
+
+  $exitItem.Add_Click({ Quit-Tray })
 
   $menu.Items.AddRange(@(
     $statusItem,
@@ -237,4 +273,9 @@ try {
   [System.Windows.Forms.Application]::Run($form)
 } catch {
   Write-TrayLog ("tray error: " + $_.Exception.Message)
+} finally {
+  if ($mutex -and $mutexCreated) {
+    try { $mutex.ReleaseMutex() } catch {}
+    $mutex.Dispose()
+  }
 }
