@@ -93,7 +93,7 @@ host_name="${CODEX_NOTIFY_NAME:-}"
 source="${CODEX_NOTIFY_SOURCE:-Codex}"
 
 curl -sS -X POST "$WINDOWS_NOTIFY_URL" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json; charset=utf-8" \
   -H "X-Notify-Token: $WINDOWS_NOTIFY_TOKEN" \
   -H "X-Notify-Source: $source" \
   -H "X-Notify-Host: $host" \

@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
   [string]$Prefix = $env:NOTIFY_SERVER_PREFIX,
@@ -180,7 +180,10 @@ try {
     $remoteHostName = $req.Headers["X-Notify-Host-Name"]
     if (-not $remoteHostName) { $remoteHostName = Get-QueryValue -req $req -name "host_name" }
 
-    $encoding = if ($req.ContentEncoding) { $req.ContentEncoding } else { [System.Text.Encoding]::UTF8 }
+    $encoding = [System.Text.Encoding]::UTF8
+    if ($req.ContentType -and $req.ContentType -match 'charset=([^\s;]+)') {
+      try { $encoding = [System.Text.Encoding]::GetEncoding($Matches[1]) } catch {}
+    }
     $reader = New-Object IO.StreamReader($req.InputStream, $encoding)
     $body = $reader.ReadToEnd()
 
