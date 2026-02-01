@@ -16,14 +16,74 @@ function Write-BridgeLog {
 }
 
 function Get-EnvUser([string]$name) {
-  $v = [Environment]::GetEnvironmentVariable($name, "User")
-  return $v
+  try { return [Environment]::GetEnvironmentVariable($name, "User") } catch { return $null }
 }
 
-$token = $env:TELEGRAM_BOT_TOKEN
-if (-not $token) { $token = Get-EnvUser "TELEGRAM_BOT_TOKEN" }
-$chatId = $env:TELEGRAM_CHAT_ID
-if (-not $chatId) { $chatId = Get-EnvUser "TELEGRAM_CHAT_ID" }
+function Read-EnvFile {
+  param([string]$path)
+  $map = @{}
+  if (-not (Test-Path $path)) { return $map }
+  foreach ($line in Get-Content -Path $path -ErrorAction SilentlyContinue) {
+    $t = $line.Trim()
+    if (-not $t -or $t.StartsWith("#")) { continue }
+    if ($t -match '^\s*export\s+') { $t = $t -replace '^\s*export\s+','' }
+    if ($t -match '^\s*([^=]+?)\s*=\s*(.*)\s*$') {
+      $key = $Matches[1].Trim()
+      $val = $Matches[2].Trim()
+      if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+        if ($val.Length -ge 2) { $val = $val.Substring(1, $val.Length - 2) }
+      }
+      if ($key) { $map[$key] = $val }
+    }
+  }
+  return $map
+}
+
+function Read-YamlFile {
+  param([string]$path)
+  $map = @{}
+  if (-not (Test-Path $path)) { return $map }
+  foreach ($line in Get-Content -Path $path -ErrorAction SilentlyContinue) {
+    $t = $line.Trim()
+    if (-not $t -or $t.StartsWith("#") -or $t -eq "---") { continue }
+    if ($t -match '^\s*([^:#]+?)\s*:\s*(.*?)\s*$') {
+      $key = $Matches[1].Trim()
+      $val = $Matches[2].Trim()
+      if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+        if ($val.Length -ge 2) { $val = $val.Substring(1, $val.Length - 2) }
+      }
+      if ($key) { $map[$key] = $val }
+    }
+  }
+  return $map
+}
+
+function Load-NotifyConfig {
+  $paths = @()
+  if ($env:NOTIFY_CONFIG_PATH) { $paths += $env:NOTIFY_CONFIG_PATH }
+  $paths += (Join-Path $PSScriptRoot ".env")
+  $paths += (Join-Path $PSScriptRoot "notify.yml")
+  $paths += (Join-Path $PSScriptRoot "notify.yaml")
+  foreach ($p in $paths) {
+    if (-not (Test-Path $p)) { continue }
+    $ext = [IO.Path]::GetExtension($p).ToLower()
+    if ($ext -eq ".yml" -or $ext -eq ".yaml") { return (Read-YamlFile -path $p) }
+    return (Read-EnvFile -path $p)
+  }
+  return @{}
+}
+
+function Get-NotifySetting {
+  param([string]$name, $cfg)
+  $v = [Environment]::GetEnvironmentVariable($name, "Process")
+  if ($v) { return $v }
+  if ($cfg -and $cfg.ContainsKey($name)) { return $cfg[$name] }
+  return (Get-EnvUser $name)
+}
+
+$notifyConfig = Load-NotifyConfig
+$token = Get-NotifySetting -name "TELEGRAM_BOT_TOKEN" -cfg $notifyConfig
+$chatId = Get-NotifySetting -name "TELEGRAM_CHAT_ID" -cfg $notifyConfig
 
 if (-not $token -or -not $chatId) {
   Write-BridgeLog "missing token/chat_id; exit"

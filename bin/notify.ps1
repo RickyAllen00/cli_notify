@@ -9,11 +9,72 @@ param(
   [string[]]$PayloadArgs
 )
 
-# Global mute: env var or disable file
-$mute = $env:NOTIFY_MUTE
-if (-not $mute) {
-  try { $mute = [Environment]::GetEnvironmentVariable("NOTIFY_MUTE", "User") } catch {}
+function Read-EnvFile {
+  param([string]$path)
+  $map = @{}
+  if (-not (Test-Path $path)) { return $map }
+  foreach ($line in Get-Content -Path $path -ErrorAction SilentlyContinue) {
+    $t = $line.Trim()
+    if (-not $t -or $t.StartsWith("#")) { continue }
+    if ($t -match '^\s*export\s+') { $t = $t -replace '^\s*export\s+','' }
+    if ($t -match '^\s*([^=]+?)\s*=\s*(.*)\s*$') {
+      $key = $Matches[1].Trim()
+      $val = $Matches[2].Trim()
+      if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+        if ($val.Length -ge 2) { $val = $val.Substring(1, $val.Length - 2) }
+      }
+      if ($key) { $map[$key] = $val }
+    }
+  }
+  return $map
 }
+
+function Read-YamlFile {
+  param([string]$path)
+  $map = @{}
+  if (-not (Test-Path $path)) { return $map }
+  foreach ($line in Get-Content -Path $path -ErrorAction SilentlyContinue) {
+    $t = $line.Trim()
+    if (-not $t -or $t.StartsWith("#") -or $t -eq "---") { continue }
+    if ($t -match '^\s*([^:#]+?)\s*:\s*(.*?)\s*$') {
+      $key = $Matches[1].Trim()
+      $val = $Matches[2].Trim()
+      if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+        if ($val.Length -ge 2) { $val = $val.Substring(1, $val.Length - 2) }
+      }
+      if ($key) { $map[$key] = $val }
+    }
+  }
+  return $map
+}
+
+function Load-NotifyConfig {
+  $paths = @()
+  if ($env:NOTIFY_CONFIG_PATH) { $paths += $env:NOTIFY_CONFIG_PATH }
+  $paths += (Join-Path $PSScriptRoot ".env")
+  $paths += (Join-Path $PSScriptRoot "notify.yml")
+  $paths += (Join-Path $PSScriptRoot "notify.yaml")
+  foreach ($p in $paths) {
+    if (-not (Test-Path $p)) { continue }
+    $ext = [IO.Path]::GetExtension($p).ToLower()
+    if ($ext -eq ".yml" -or $ext -eq ".yaml") { return (Read-YamlFile -path $p) }
+    return (Read-EnvFile -path $p)
+  }
+  return @{}
+}
+
+function Get-NotifySetting {
+  param([string]$name, $cfg)
+  $v = [Environment]::GetEnvironmentVariable($name, "Process")
+  if ($v) { return $v }
+  if ($cfg -and $cfg.ContainsKey($name)) { return $cfg[$name] }
+  try { return [Environment]::GetEnvironmentVariable($name, "User") } catch { return $null }
+}
+
+$notifyConfig = Load-NotifyConfig
+
+# Global mute: env var or disable file
+$mute = Get-NotifySetting -name "NOTIFY_MUTE" -cfg $notifyConfig
 $flagAll = Join-Path $PSScriptRoot "notify.disabled"
 if ((Test-Path $flagAll) -or ($mute -and $mute -ne "0")) { exit 0 }
 
@@ -45,16 +106,12 @@ function Write-NotifyLog {
   } catch {}
 }
 
-# Allow reading webhook from User env if not present in process env
-if (-not $WebhookUrl) {
-  try { $WebhookUrl = [Environment]::GetEnvironmentVariable("WECOM_WEBHOOK", "User") } catch {}
-}
+# Allow reading webhook from config/User env if not present
+if (-not $WebhookUrl) { $WebhookUrl = Get-NotifySetting -name "WECOM_WEBHOOK" -cfg $notifyConfig }
 
-# Telegram config from env (User scope fallback)
-$tgToken = $env:TELEGRAM_BOT_TOKEN
-if (-not $tgToken) { try { $tgToken = [Environment]::GetEnvironmentVariable("TELEGRAM_BOT_TOKEN", "User") } catch {} }
-$tgChat = $env:TELEGRAM_CHAT_ID
-if (-not $tgChat) { try { $tgChat = [Environment]::GetEnvironmentVariable("TELEGRAM_CHAT_ID", "User") } catch {} }
+# Telegram config from config/env
+$tgToken = Get-NotifySetting -name "TELEGRAM_BOT_TOKEN" -cfg $notifyConfig
+$tgChat = Get-NotifySetting -name "TELEGRAM_CHAT_ID" -cfg $notifyConfig
 
 # Read stdin when invoked as a hook (e.g., Claude Code sends JSON)
 $raw = ""
@@ -180,6 +237,16 @@ function Get-ProjectPath {
   try { return (Get-Location).Path } catch { return "unknown" }
 }
 
+function Get-HostName {
+  param($p)
+  if ($p) {
+    foreach ($k in @("host","hostname","machine","node","computer")) {
+      if ($p.$k) { return $p.$k }
+    }
+  }
+  return $null
+}
+
 function Normalize-Reply {
   param([string]$text, [int]$max)
   if (-not $text) { return "(无内容)" }
@@ -233,11 +300,8 @@ Update-SessionMap -sessionId $sessionId -projectPath $projectPath -source $Sourc
 
 $maxReply = 0  # 0 = no truncation
 try {
-  if ($env:NOTIFY_MAX_REPLY) { $maxReply = [int]$env:NOTIFY_MAX_REPLY }
-  else {
-    $v = [Environment]::GetEnvironmentVariable('NOTIFY_MAX_REPLY','User')
-    if ($v) { $maxReply = [int]$v }
-  }
+  $v = Get-NotifySetting -name "NOTIFY_MAX_REPLY" -cfg $notifyConfig
+  if ($v) { $maxReply = [int]$v }
 } catch {}
 
 $rawSnippet = Get-LastAssistantText -p $payload
@@ -255,8 +319,15 @@ if ($payload) {
   }
 }
 
-# Only push session id + project path + end time + last reply
-$Body = "会话ID: $sessionId`n项目: $projectPath`n结束: $endTime`n回复: $snippet"
+# Only push host (optional) + session id + project path + end time + last reply
+$hostName = Get-HostName -p $payload
+$bodyLines = @()
+if ($hostName) { $bodyLines += "主机: $hostName" }
+$bodyLines += "会话ID: $sessionId"
+$bodyLines += "项目: $projectPath"
+$bodyLines += "结束: $endTime"
+$bodyLines += "回复: $snippet"
+$Body = $bodyLines -join "`n"
 
 Write-NotifyLog -Channel "invoke" -Status "ok" -Message "$Source"
 

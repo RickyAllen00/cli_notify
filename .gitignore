@@ -8,6 +8,8 @@ session-map.json
 
 # env
 .env
+notify.yml
+notify.yaml
 
 # OS
 Thumbs.db

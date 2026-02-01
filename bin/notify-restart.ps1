@@ -7,6 +7,7 @@ param(
 $bin = Split-Path -Parent $MyInvocation.MyCommand.Path
 $trayVbs = Join-Path $bin "notify-tray.vbs"
 $telegramVbs = Join-Path $bin "telegram-bridge.vbs"
+$serverVbs = Join-Path $bin "notify-server.vbs"
 $codexWatch = Join-Path $bin "codex-watch.ps1"
 
 function Write-Info {
@@ -26,6 +27,7 @@ function Stop-ByCmdline {
 Write-Info "Stopping existing processes..."
 Stop-ByCmdline 'notify-tray\.ps1|notify-tray\.vbs'
 Stop-ByCmdline 'telegram-bridge\.ps1|telegram-bridge\.vbs'
+Stop-ByCmdline 'notify-server\.ps1|notify-server\.vbs'
 Stop-ByCmdline 'codex-watch\.ps1'
 try { schtasks /End /TN CodexWatch | Out-Null } catch {}
 
@@ -37,6 +39,11 @@ if (Test-Path $trayVbs) {
 Write-Info "Starting Telegram bridge..."
 if (Test-Path $telegramVbs) {
   Start-Process -FilePath "wscript.exe" -ArgumentList "`"$telegramVbs`"" -WindowStyle Hidden | Out-Null
+}
+
+Write-Info "Starting Notify server..."
+if (Test-Path $serverVbs) {
+  Start-Process -FilePath "wscript.exe" -ArgumentList "`"$serverVbs`"" -WindowStyle Hidden | Out-Null
 }
 
 Write-Info "Starting CodexWatch..."
