@@ -1,9 +1,9 @@
 # Windows CLI Notify Bridge (Codex / Claude / WeCom / Telegram)
 
 将 Codex / Claude 的回复推送到 Windows 通知、企业微信或 Telegram，
-并支持在 Telegram 端继续对话（/codex、/claude）。
+并支持从 Telegram 端继续对话（/codex、/claude）。
 
-> 本仓库不包含任何敏感信息（Webhook、Token、Chat ID）。
+本仓库不包含任何敏感信息（Webhook、Token、Chat ID）。
 
 ---
 
@@ -12,18 +12,17 @@
 - 企业微信机器人 / Telegram Bot 推送
 - Telegram 端闭环控制 Codex / Claude
 - 托盘菜单：一键开关通道 + 调试日志
+- 可选：HTTP 通知服务端，支持多台 Linux Codex 推送到 Windows
 
 ---
 
-## 环境要求
+## 新 Windows 设备从零部署（推荐流程）
+
+### 0) 环境要求
 - Windows 10/11
 - PowerShell 5.1+
 - （可选）Windows 通知模块 BurntToast
 - （可选）已安装 Codex / Claude CLI
-
----
-
-## 安装与配置
 
 ### 1) 获取代码
 ```powershell
@@ -40,32 +39,42 @@ Copy-Item .\bin\* $bin -Force
 ```
 > 也可以放到任意目录，但后续所有路径需对应修改。
 
-### 3) 安装 BurntToast（仅 Windows 通知需要）
+### 3) 配置（推荐放在 `~\bin\.env`）
+创建 `C:\Users\<User>\bin\.env`，示例：
+```
+# 通知通道（按需填写）
+WECOM_WEBHOOK=...
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+
+# 远程通知服务端（需要远程 Linux Codex 推送时必填）
+NOTIFY_SERVER_TOKEN=强随机字符串
+NOTIFY_SERVER_PREFIX=http://+:9412/
+NOTIFY_SERVER_PORT=9412
+```
+脚本读取配置优先级：
+1) `NOTIFY_CONFIG_PATH` 指定的路径  
+2) 脚本同目录下的 `.env` / `notify.yml` / `notify.yaml`
+
+### 4) 安装 BurntToast（仅 Windows 通知需要）
 ```powershell
 Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
 Install-Module BurntToast -Scope CurrentUser -Force
 ```
 
-### 4) 配置环境变量（按需）
+### 5) 启动托盘与桥接（手动运行）
 ```powershell
-setx WECOM_WEBHOOK "你的企微Webhook"
-setx TELEGRAM_BOT_TOKEN "你的Telegram Bot Token"
-setx TELEGRAM_CHAT_ID "你的Chat ID"
-```
-也可以使用 `.env` 或 `notify.yml` 配置（脚本会自动读取），例如：
-```
-WECOM_WEBHOOK=...
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_CHAT_ID=...
-```
-放置位置优先级：
-1) `NOTIFY_CONFIG_PATH` 指定的路径  
-2) 脚本同目录下的 `.env` / `notify.yml` / `notify.yaml`
-> 当脚本位于 `~/bin` 但配置文件在项目目录时，可用 `NOTIFY_CONFIG_PATH` 指向该文件。
+# 托盘菜单
+wscript.exe "$env:USERPROFILE\bin\notify-tray.vbs"
 
----
+# Telegram Bridge（仅需要 Telegram 控制时）
+wscript.exe "$env:USERPROFILE\bin\telegram-bridge.vbs"
 
-## 快速验证
+# 远程通知服务端（仅需要远程推送时）
+wscript.exe "$env:USERPROFILE\bin\notify-server.vbs"
+```
+
+### 6) 快速验证
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\bin\notify.ps1" -Source "Test" -Title "Hello" -Body "It works"
 ```
@@ -101,67 +110,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\bin\notify
 
 ---
 
-## 远程 Codex 完成后也推送到 Windows / Telegram
+## 远程 Linux Codex 推送到 Windows
 适用于：你在 Linux 云服务器上运行 Codex，但希望通知出现在 Windows（Toast + Telegram/企微）。
 
 ### Windows 端：启动通知服务端
-1) 设置服务端 Token（必填）
+1) 确保 `NOTIFY_SERVER_TOKEN` 已配置（见上文 `.env`）。
+
+2) 远程访问需要 URL ACL 与防火墙放行（管理员权限）：
 ```powershell
-setx NOTIFY_SERVER_TOKEN "强随机字符串"
+netsh http add urlacl url=http://+:9412/ user=%USERNAME%
+New-NetFirewallRule -DisplayName "Notify Server 9412" -Direction Inbound -Protocol TCP -LocalPort 9412 -Action Allow
 ```
 
-2)（可选）指定监听地址/端口  
-默认只监听本机 `127.0.0.1:9412`。如果需要远程访问，请设置为 `http://+:9412/`：
-```powershell
-setx NOTIFY_SERVER_PREFIX "http://+:9412/"
-setx NOTIFY_SERVER_PORT "9412"
-```
-
-3) 运行服务端（隐藏窗口）
+3) 运行服务端（隐藏窗口）：
 ```powershell
 wscript.exe "$env:USERPROFILE\bin\notify-server.vbs"
 ```
 
-> 远程访问通常需要额外的 URL ACL 与防火墙放行（管理员权限）：
-> ```powershell
-> netsh http add urlacl url=http://+:9412/ user=%USERNAME%
-> New-NetFirewallRule -DisplayName "Notify Server 9412" -Direction Inbound -Protocol TCP -LocalPort 9412 -Action Allow
-> ```
 > 建议通过 VPN/内网穿透/反向代理等方式访问，避免直接暴露公网端口。
 
-### Linux 端：配置 Codex 通知钩子
-1) 复制脚本到服务器
-```bash
-mkdir -p ~/bin
-curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remote/codex-notify.sh -o ~/bin/codex-notify.sh
-chmod +x ~/bin/codex-notify.sh
-```
-
-2) 配置环境变量（或写入 `.env` / `notify.yml`）
-```bash
-export WINDOWS_NOTIFY_URL="http://<你的Windows主机IP>:9412/notify"
-export WINDOWS_NOTIFY_TOKEN="与Windows端一致的Token"
-# 可选：指定通知中显示的主机名/IP
-export CODEX_NOTIFY_HOST="192.168.101.35"
-```
-如果你使用配置文件，可通过 `NOTIFY_CONFIG_PATH` 指定路径。
-
-3) 在 `~/.codex/config.toml` 增加：
-```toml
-notify = ["/bin/bash","/home/<user>/bin/codex-notify.sh"]
-```
-> 注意：`config.toml` 不会展开 `~`，请使用绝对路径。
-
-完成后，Linux 上的 Codex 每轮结束都会推送到 Windows，并复用你现有的 Telegram/企微配置。
-
----
-
-## 多台服务器快速配置
-已安装 Codex 的服务器可以执行以下一条命令完成安装与配置：
+### Linux 端：一键安装（推荐）
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remote/install-codex-notify.sh | bash -s -- \
   --url "http://<你的Windows主机IP>:9412/notify" \
-  --token "<你的Token>" \
+  --token "<与Windows端一致的Token>" \
   --host "<当前服务器标识>"
 ```
 该命令会：
@@ -169,11 +141,22 @@ curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remo
 - 写入 `~/bin/.env`
 - 自动配置 `~/.codex/config.toml` 的 `notify` 钩子
 
-如果你不想写入钩子，可加 `--skip-hook`。
+> 注意：`config.toml` 不会展开 `~`，脚本已写入绝对路径。
 
 ---
 
-## 接入 Codex
+## 多台服务器快速配置
+对每台服务器执行一次安装命令，建议 `--host` 使用可读标识：
+```bash
+curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remote/install-codex-notify.sh | bash -s -- \
+  --url "http://<你的Windows主机IP>:9412/notify" \
+  --token "<你的Token>" \
+  --host "<如 gpu-1 / prod-nyc / 192.168.1.23>"
+```
+
+---
+
+## 接入 Codex（Windows 本地）
 在 `~\.codex\config.toml` 增加（路径按实际调整）：
 ```
 notify = ["powershell","-NoProfile","-ExecutionPolicy","Bypass","-File","C:\\Users\\<User>\\bin\\notify.ps1","-Source","Codex"]
