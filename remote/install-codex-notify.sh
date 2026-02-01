@@ -169,6 +169,10 @@ if [ "$SKIP_HOOK" -eq 0 ]; then
   cfg="$HOME/.codex/config.toml"
   notify_line="notify = [\"/bin/bash\",\"$HOME/bin/codex-notify.sh\"]"
   if [ -f "$cfg" ]; then
+    awk -v nline="$notify_line" '
+      /^[[:space:]]*notify[[:space:]]*=/ { print nline; next }
+      { print }
+    ' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
     top_notify="$(awk '/^[[:space:]]*[[]/{exit} /^[[:space:]]*notify[[:space:]]*=/{print "yes"; exit}' "$cfg")"
     if [ -z "$top_notify" ]; then
       awk -v nline="$notify_line" '
