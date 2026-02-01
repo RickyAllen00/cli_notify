@@ -126,7 +126,8 @@ wscript.exe "$env:USERPROFILE\bin\notify-server.vbs"
 curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remote/install-codex-notify.sh | bash -s -- \
   --url "http://<你的Windows主机IP>:9412/notify" \
   --token "<与Windows端一致的Token>" \
-  --host "<当前服务器标识>"
+  --host "<当前服务器标识或IP>" \
+  --name "<服务器备注名，可选>"
 ```
 该命令会：
 - 安装/更新 `~/bin/codex-notify.sh`
@@ -143,7 +144,8 @@ curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remo
 curl -fsSL https://raw.githubusercontent.com/RickyAllen00/cli_notify/master/remote/install-codex-notify.sh | bash -s -- \
   --url "http://<你的Windows主机IP>:9412/notify" \
   --token "<你的Token>" \
-  --host "<如 gpu-1 / prod-nyc / 192.168.1.23>"
+  --host "<如 192.168.1.23>" \
+  --name "<如 NAS / gpu-1>"
 ```
 需要密码的服务器：先 `ssh` 登录再执行命令。
 

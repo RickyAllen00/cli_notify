@@ -240,6 +240,9 @@ function Get-ProjectPath {
 function Get-HostName {
   param($p)
   if ($p) {
+    foreach ($k in @("host_name","hostName","host_label","hostLabel","host_alias","hostAlias","host_remark","hostRemark")) {
+      if ($p.$k) { return $p.$k }
+    }
     foreach ($k in @("host","hostname","machine","node","computer")) {
       if ($p.$k) { return $p.$k }
     }

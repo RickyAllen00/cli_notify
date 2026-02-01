@@ -3,16 +3,17 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-install-codex-notify.sh --url <windows_url> --token <token> [--host <host>] [--source <source>] [--env <path>] [--skip-hook]
+install-codex-notify.sh --url <windows_url> --token <token> [--host <host>] [--name <label>] [--source <source>] [--env <path>] [--skip-hook]
 
 Examples:
-  ./install-codex-notify.sh --url http://192.168.101.40:9412/notify --token XXXXX --host 192.168.101.35
+  ./install-codex-notify.sh --url http://192.168.101.40:9412/notify --token XXXXX --host 192.168.101.35 --name NAS
 USAGE
 }
 
 WINDOWS_NOTIFY_URL="${WINDOWS_NOTIFY_URL:-}"
 WINDOWS_NOTIFY_TOKEN="${WINDOWS_NOTIFY_TOKEN:-}"
 CODEX_NOTIFY_HOST="${CODEX_NOTIFY_HOST:-}"
+CODEX_NOTIFY_NAME="${CODEX_NOTIFY_NAME:-}"
 CODEX_NOTIFY_SOURCE="${CODEX_NOTIFY_SOURCE:-Codex}"
 ENV_PATH="${ENV_PATH:-$HOME/bin/.env}"
 SKIP_HOOK=0
@@ -22,6 +23,7 @@ while [ $# -gt 0 ]; do
     --url) WINDOWS_NOTIFY_URL="$2"; shift 2;;
     --token) WINDOWS_NOTIFY_TOKEN="$2"; shift 2;;
     --host) CODEX_NOTIFY_HOST="$2"; shift 2;;
+    --name) CODEX_NOTIFY_NAME="$2"; shift 2;;
     --source) CODEX_NOTIFY_SOURCE="$2"; shift 2;;
     --env) ENV_PATH="$2"; shift 2;;
     --skip-hook) SKIP_HOOK=1; shift 1;;
@@ -162,6 +164,9 @@ upsert WINDOWS_NOTIFY_URL "$WINDOWS_NOTIFY_URL"
 upsert WINDOWS_NOTIFY_TOKEN "$WINDOWS_NOTIFY_TOKEN"
 upsert NOTIFY_SERVER_TOKEN "$WINDOWS_NOTIFY_TOKEN"
 upsert CODEX_NOTIFY_HOST "$CODEX_NOTIFY_HOST"
+if [ -n "$CODEX_NOTIFY_NAME" ]; then
+  upsert CODEX_NOTIFY_NAME "$CODEX_NOTIFY_NAME"
+fi
 upsert CODEX_NOTIFY_SOURCE "$CODEX_NOTIFY_SOURCE"
 
 if [ "$SKIP_HOOK" -eq 0 ]; then

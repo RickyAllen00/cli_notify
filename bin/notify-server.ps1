@@ -177,6 +177,9 @@ try {
     $remoteHost = $req.Headers["X-Notify-Host"]
     if (-not $remoteHost) { $remoteHost = Get-QueryValue -req $req -name "host" }
 
+    $remoteHostName = $req.Headers["X-Notify-Host-Name"]
+    if (-not $remoteHostName) { $remoteHostName = Get-QueryValue -req $req -name "host_name" }
+
     $encoding = if ($req.ContentEncoding) { $req.ContentEncoding } else { [System.Text.Encoding]::UTF8 }
     $reader = New-Object IO.StreamReader($req.InputStream, $encoding)
     $body = $reader.ReadToEnd()
@@ -187,6 +190,7 @@ try {
     }
     if ($payload) {
       if ($remoteHost) { $payload | Add-Member -MemberType NoteProperty -Name host -Value $remoteHost -Force }
+      if ($remoteHostName) { $payload | Add-Member -MemberType NoteProperty -Name host_name -Value $remoteHostName -Force }
       if ($source) { $payload | Add-Member -MemberType NoteProperty -Name source -Value $source -Force }
       $body = $payload | ConvertTo-Json -Depth 10
     }
