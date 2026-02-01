@@ -324,6 +324,11 @@ if ($payload) {
 
 # Only push host (optional) + session id + project path + end time + last reply
 $hostName = Get-HostName -p $payload
+if (-not $hostName) {
+  $hostName = Get-NotifySetting -name "NOTIFY_HOST_NAME" -cfg $notifyConfig
+  if (-not $hostName) { $hostName = Get-NotifySetting -name "NOTIFY_HOST" -cfg $notifyConfig }
+  if (-not $hostName -and $env:COMPUTERNAME) { $hostName = $env:COMPUTERNAME }
+}
 $hostLine = $null
 if ($hostName) { $hostLine = "主机: $hostName" }
 
