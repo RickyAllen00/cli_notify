@@ -163,6 +163,26 @@ foreach ($s in $servers) {
 }
 ```
 
+**集中配置（推荐）**
+你可以在 Windows 上维护一个 `servers.yml`，然后一键下发到所有远程服务器：
+```yaml
+servers:
+  - host: 192.168.101.35
+    user: zwb
+    name: NAS
+    key: C:\Users\<User>\.ssh\id_rsa
+  - host: 1.2.3.4
+    user: ubuntu
+    name: gpu-1
+    # password: 仅当无 SSH Key 时使用（不推荐）
+```
+执行：
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\bin\remote-batch.ps1"
+```
+> `servers.yml` 默认放在 `bin` 目录，支持 `-ServersPath` 指定路径。  
+> 如果需要密码登录且没有密钥，可安装 PuTTY 并使用 `plink.exe`。  
+
 ---
 
 ## 迁移到新 Windows / 更换 IP
