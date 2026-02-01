@@ -158,11 +158,20 @@ upsert CODEX_NOTIFY_SOURCE "$CODEX_NOTIFY_SOURCE"
 
 if [ "$SKIP_HOOK" -eq 0 ]; then
   mkdir -p "$HOME/.codex"
-  if [ -f "$HOME/.codex/config.toml" ]; then
-    grep -q '^notify[[:space:]]*=' "$HOME/.codex/config.toml" || \
-      echo 'notify = ["/bin/bash","-lc","~/bin/codex-notify.sh"]' >> "$HOME/.codex/config.toml"
+  cfg="$HOME/.codex/config.toml"
+  notify_line='notify = ["/bin/bash","-lc","~/bin/codex-notify.sh"]'
+  if [ -f "$cfg" ]; then
+    top_notify="$(awk '/^[[:space:]]*\\[/{exit} /^[[:space:]]*notify[[:space:]]*=/{print \"yes\"; exit}' "$cfg")"
+    if [ -z "$top_notify" ]; then
+      awk -v nline="$notify_line" '
+        BEGIN { inserted=0 }
+        /^[[:space:]]*\\[/ && !inserted { print nline; inserted=1 }
+        { print }
+        END { if (!inserted) print nline }
+      ' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+    fi
   else
-    echo 'notify = ["/bin/bash","-lc","~/bin/codex-notify.sh"]' > "$HOME/.codex/config.toml"
+    echo "$notify_line" > "$cfg"
   fi
 fi
 

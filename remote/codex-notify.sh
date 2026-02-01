@@ -79,7 +79,10 @@ fi
 : "${WINDOWS_NOTIFY_URL:?missing WINDOWS_NOTIFY_URL}"
 : "${WINDOWS_NOTIFY_TOKEN:?missing WINDOWS_NOTIFY_TOKEN}"
 
-payload="$(cat)"
+payload="${1:-}"
+if [ -z "$payload" ]; then
+  payload="$(cat)"
+fi
 host="${CODEX_NOTIFY_HOST:-$(hostname)}"
 source="${CODEX_NOTIFY_SOURCE:-Codex}"
 
