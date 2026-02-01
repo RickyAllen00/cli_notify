@@ -321,8 +321,11 @@ if ($payload) {
 
 # Only push host (optional) + session id + project path + end time + last reply
 $hostName = Get-HostName -p $payload
+$hostLine = $null
+if ($hostName) { $hostLine = "主机: $hostName" }
+
 $bodyLines = @()
-if ($hostName) { $bodyLines += "主机: $hostName" }
+if ($hostLine) { $bodyLines += $hostLine }
 $bodyLines += "会话ID: $sessionId"
 $bodyLines += "项目: $projectPath"
 $bodyLines += "结束: $endTime"
@@ -364,12 +367,13 @@ if (Test-Path $flagWecom) {
   Write-NotifyLog -Channel "wecom" -Status "skip" -Message "disabled"
 } else {
   if ($WebhookUrl) {
-    $content = @"
-会话ID: $sessionId
-项目: $projectPath
-结束: $endTime
-回复: $snippet
-"@.Trim()
+    $wecomLines = @()
+    if ($hostLine) { $wecomLines += $hostLine }
+    $wecomLines += "会话ID: $sessionId"
+    $wecomLines += "项目: $projectPath"
+    $wecomLines += "结束: $endTime"
+    $wecomLines += "回复: $snippet"
+    $content = $wecomLines -join "`n"
     $payloadOut = @{ msgtype = "markdown"; markdown = @{ content = $content } } | ConvertTo-Json -Depth 5
     try {
       Invoke-RestMethod -Method Post -Uri $WebhookUrl -ContentType 'application/json; charset=utf-8' -Body $payloadOut | Out-Null
@@ -387,7 +391,7 @@ if (Test-Path $flagTg) {
   Write-NotifyLog -Channel "telegram" -Status "skip" -Message "disabled"
 } else {
   if ($tgToken -and $tgChat) {
-    $tgText = "会话ID: $sessionId`n项目: $projectPath`n结束: $endTime`n回复: $snippet"
+    $tgText = if ($hostLine) { "$hostLine`n会话ID: $sessionId`n项目: $projectPath`n结束: $endTime`n回复: $snippet" } else { "会话ID: $sessionId`n项目: $projectPath`n结束: $endTime`n回复: $snippet" }
     $tgUri = "https://api.telegram.org/bot$tgToken/sendMessage"
 
     function Send-TgChunk {
