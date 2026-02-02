@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 This project follows Semantic Versioning.
 
+## 0.1.2
+- Support Telegram image replies for remote sessions (auto upload).
+
 ## 0.1.1
 - Add Telegram reply-to-continue for latest session (text/image).
 

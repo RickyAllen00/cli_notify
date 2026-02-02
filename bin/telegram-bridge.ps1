@@ -188,7 +188,7 @@ function Get-TgFilePath {
 }
 
 function Save-MessageImage {
-  param($msg, [string]$cwd, [string]$sessionId)
+  param($msg, [string]$cwd, [switch]$ForceLocal)
   $fileId = Get-MessageImageFileId -msg $msg
   if (-not $fileId) { return $null }
   $filePath = Get-TgFilePath -fileId $fileId
@@ -198,7 +198,7 @@ function Save-MessageImage {
 
   $targetRoot = $cwd
   $useRelative = $true
-  if (-not $targetRoot -or -not (Test-Path $targetRoot)) {
+  if ($ForceLocal -or -not $targetRoot -or -not (Test-Path $targetRoot)) {
     $targetRoot = $logDir
     $useRelative = $false
   }
@@ -212,10 +212,14 @@ function Save-MessageImage {
   $downloadUrl = "https://api.telegram.org/file/bot$token/$filePath"
   try { Invoke-WebRequest -Uri $downloadUrl -OutFile $dest | Out-Null } catch { return $null }
 
-  if ($useRelative) {
-    return (".notify\\" + $name)
+  $ref = $dest
+  if ($useRelative) { $ref = (".notify\\" + $name) }
+  return [pscustomobject]@{
+    local_path = $dest
+    ref = $ref
+    remote_ref = (".notify/" + $name)
+    file_name = $name
   }
-  return $dest
 }
 
 function Escape-ForBashDoubleQuotes {
@@ -321,6 +325,68 @@ function Build-RemoteCommand {
   return "bash -lc `"$cmd`""
 }
 
+function Build-BashLc {
+  param([string]$cmd)
+  $cmdEsc = Escape-ForBashDoubleQuotes $cmd
+  return "bash -lc `"$cmdEsc`""
+}
+
+function Invoke-RemoteCommandSync {
+  param($server, [string]$command)
+  $plink = Get-Command plink.exe -ErrorAction SilentlyContinue
+  $ssh = Get-Command ssh -ErrorAction SilentlyContinue
+  $host = $server.host
+  $user = $server.user
+  if (-not $user -and $server.username) { $user = $server.username }
+  $target = if ($user) { "$user@$host" } else { $host }
+  $port = $server.port
+  $key = $server.key
+  $password = $server.password
+
+  if ($password -and $plink) {
+    $args = @("-batch","-ssh",$target)
+    if ($port) { $args += @("-P",$port) }
+    if ($key) { $args += @("-i",$key) }
+    $args += @("-pw",$password,$command)
+    & $plink.Source @args | Out-Null
+    return
+  }
+  if (-not $ssh) { throw "ssh not found in PATH." }
+  $args = @()
+  if ($port) { $args += @("-p",$port) }
+  if ($key) { $args += @("-i",$key) }
+  $args += @($target, $command)
+  & $ssh.Source @args | Out-Null
+}
+
+function Upload-RemoteFile {
+  param($server, [string]$localPath, [string]$remotePath)
+  $pscp = Get-Command pscp.exe -ErrorAction SilentlyContinue
+  $scp = Get-Command scp -ErrorAction SilentlyContinue
+  $host = $server.host
+  $user = $server.user
+  if (-not $user -and $server.username) { $user = $server.username }
+  $target = if ($user) { "$user@$host" } else { $host }
+  $port = $server.port
+  $key = $server.key
+  $password = $server.password
+
+  if ($password -and $pscp) {
+    $args = @("-batch","-pw",$password)
+    if ($port) { $args += @("-P",$port) }
+    if ($key) { $args += @("-i",$key) }
+    $args += @($localPath, ("{0}:{1}" -f $target, $remotePath))
+    & $pscp.Source @args | Out-Null
+    return
+  }
+  if (-not $scp) { throw "scp not found in PATH." }
+  $args = @()
+  if ($port) { $args += @("-P",$port) }
+  if ($key) { $args += @("-i",$key) }
+  $args += @($localPath, ("{0}:{1}" -f $target, $remotePath))
+  & $scp.Source @args | Out-Null
+}
+
 function Start-RemoteCommand {
   param($server, [string]$command)
   $plink = Get-Command plink.exe -ErrorAction SilentlyContinue
@@ -350,7 +416,7 @@ function Start-RemoteCommand {
 }
 
 function Continue-Session {
-  param($ctx, [string]$prompt)
+  param($ctx, [string]$prompt, $imageInfo)
   $sessionId = $ctx.session_id
   if (-not $sessionId -or $sessionId -eq "unknown") {
     Send-Tg "无法定位会话，请使用 /codex 或 /claude 命令。"
@@ -359,7 +425,15 @@ function Continue-Session {
   $isClaude = $false
   if ($ctx.source -and ($ctx.source -match 'Claude')) { $isClaude = $true }
   $tool = if ($isClaude) { "claude" } else { "codex" }
-  if (Is-LocalHost -host $ctx.host -hostName $ctx.host_name) {
+  $isLocal = Is-LocalHost -host $ctx.host -hostName $ctx.host_name
+
+  if ($imageInfo) {
+    if ($isLocal) {
+      if ($prompt) { $prompt = "@$($imageInfo.ref) $prompt" } else { $prompt = "@$($imageInfo.ref)" }
+    }
+  }
+
+  if ($isLocal) {
     if ($isClaude) {
       Start-Claude -sessionId $sessionId -prompt $prompt
     } else {
@@ -372,6 +446,20 @@ function Continue-Session {
   if (-not $server) {
     Send-Tg "未找到远程服务器配置，请在 servers.yml 中添加对应主机。"
     return
+  }
+  if ($imageInfo) {
+    try {
+      if (-not $ctx.cwd) { throw "远程会话缺少工作目录，无法上传图片。" }
+      $remoteDir = ($ctx.cwd.TrimEnd("/") + "/.notify")
+      $mkdirCmd = Build-BashLc ("mkdir -p `"$remoteDir`"")
+      Invoke-RemoteCommandSync -server $server -command $mkdirCmd
+      $remotePath = ($remoteDir + "/" + $imageInfo.file_name)
+      Upload-RemoteFile -server $server -localPath $imageInfo.local_path -remotePath $remotePath
+      if ($prompt) { $prompt = "@$($imageInfo.remote_ref) $prompt" } else { $prompt = "@$($imageInfo.remote_ref)" }
+    } catch {
+      Send-Tg "远程图片上传失败: $($_.Exception.Message)"
+      return
+    }
   }
   $cmd = Build-RemoteCommand -tool $tool -sessionId $sessionId -prompt $prompt -cwd $ctx.cwd
   try {
@@ -498,26 +586,25 @@ while ($true) {
       }
 
       $isRemote = -not (Is-LocalHost -host $ctx.host -hostName $ctx.host_name)
-      if ($isRemote -and $hasImage) {
-        Send-Tg "远程会话暂不支持图片回复，请发送纯文本。"
-        continue
-      }
 
       $cwd = $ctx.cwd
       if (-not $cwd) { $cwd = (Get-Location).Path }
-      $imageRef = $null
-      if (-not $isRemote) { $imageRef = Save-MessageImage -msg $msg -cwd $cwd -sessionId $ctx.session_id }
+      $imageInfo = $null
+      if ($hasImage) {
+        if ($isRemote) {
+          $imageInfo = Save-MessageImage -msg $msg -cwd $logDir -ForceLocal
+        } else {
+          $imageInfo = Save-MessageImage -msg $msg -cwd $cwd
+        }
+      }
 
       $prompt = $text
-      if ($imageRef) {
-        if ($prompt) { $prompt = "@$imageRef $prompt" } else { $prompt = "@$imageRef" }
-      }
-      if (-not $prompt) {
+      if (-not $prompt -and -not $imageInfo) {
         Send-Tg "请输入文字或图片。"
         continue
       }
 
-      Continue-Session -ctx $ctx -prompt $prompt
+      Continue-Session -ctx $ctx -prompt $prompt -imageInfo $imageInfo
       continue
     }
 
