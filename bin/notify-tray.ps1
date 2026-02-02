@@ -23,6 +23,7 @@ $flagWecom = Join-Path $bin "notify.wecom.disabled"
 $flagTg = Join-Path $bin "notify.telegram.disabled"
 $flagDebug = Join-Path $bin "notify.debug.enabled"
 $notifyScript = Join-Path $bin "notify.ps1"
+$configScript = Join-Path $bin "notify-config.ps1"
 
 $logDir = Join-Path $env:LOCALAPPDATA "notify"
 try { if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null } } catch {}
@@ -114,6 +115,7 @@ try {
   $tgItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $debugItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $testItem = New-Object System.Windows.Forms.ToolStripMenuItem
+  $configItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $exitItem = New-Object System.Windows.Forms.ToolStripMenuItem
 
   $statusItem.Enabled = $false
@@ -129,6 +131,7 @@ try {
   $tgItem.Text = "推送到 Telegram"
   $debugItem.Text = "调试日志"
   $testItem.Text = "发送测试"
+  $configItem.Text = "打开配置"
   $exitItem.Text = "退出"
 
   function Refresh-UI {
@@ -198,6 +201,12 @@ try {
     & $notifyScript -Source "GUI" $testPayload
   })
 
+  $configItem.Add_Click({
+    if (Test-Path $configScript) {
+      Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$configScript) -WindowStyle Hidden | Out-Null
+    }
+  })
+
   function Quit-Tray {
     try { $icon.Visible = $false } catch {}
     try { $menuTimer.Stop(); $menuTimer.Dispose() } catch {}
@@ -219,6 +228,7 @@ try {
     $debugItem,
     (New-Object System.Windows.Forms.ToolStripSeparator),
     $testItem,
+    $configItem,
     $exitItem
   ))
 

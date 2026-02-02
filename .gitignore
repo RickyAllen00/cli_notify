@@ -13,6 +13,9 @@ notify.yaml
 servers.yml
 servers.yaml
 
+# build
+dist/
+
 # OS
 Thumbs.db
 .DS_Store

@@ -16,6 +16,28 @@
 
 ---
 
+## 一键安装（推荐）
+1) 在 GitHub Releases 下载最新的 `NotifySetup.exe`  
+2) 双击运行安装向导  
+
+安装向导支持：
+- 企微 / Telegram 配置（可跳过，稍后在托盘菜单里配置）
+- 远程通知服务端（自动检查端口、防火墙、URLACL）
+- 远程 Linux 一键配置（最多 5 台服务器）
+- 选择是否开机自启
+
+### 构建安装包（维护者）
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build-setup.ps1
+```
+输出：
+```
+dist\NotifySetup.exe
+dist\NotifySetup-<version>.exe
+```
+
+---
+
 ## Quick Start（新 Windows 设备）
 
 ### 1) 下载代码
@@ -276,3 +298,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\bin\notify
 
 ## License
 MIT
+
+---
+
+## Release（维护者）
+1) 更新 `VERSION` 与 `CHANGELOG.md`  
+2) 构建并发布：
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\release.ps1
+```
+> 需要 GitHub CLI（`gh`）或手动发布 Release。
