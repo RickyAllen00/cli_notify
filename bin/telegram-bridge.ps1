@@ -379,6 +379,7 @@ function Upload-RemoteFile {
     & $pscp.Source @args | Out-Null
     return
   }
+  if ($password -and -not $pscp) { throw "pscp not found in PATH (password upload requires PuTTY/pscp)." }
   if (-not $scp) { throw "scp not found in PATH." }
   $args = @()
   if ($port) { $args += @("-P",$port) }
@@ -413,6 +414,18 @@ function Start-RemoteCommand {
   if ($key) { $args += @("-i",$key) }
   $args += @($target, $command)
   Start-Process -FilePath $ssh.Source -ArgumentList $args -WindowStyle Hidden | Out-Null
+}
+
+function Explain-RemoteUploadError {
+  param([string]$message)
+  if (-not $message) { return "远程图片上传失败，请检查远程配置与网络。" }
+  if ($message -match 'pscp') {
+    return "远程图片上传需要 PuTTY 的 pscp.exe（已填写密码时必须）。请安装 PuTTY 并将 pscp.exe 加入 PATH。"
+  }
+  if ($message -match 'scp') {
+    return "远程图片上传需要 scp（OpenSSH Client）或 PuTTY 的 pscp.exe。请安装其中之一并加入 PATH。"
+  }
+  return "远程图片上传失败: $message"
 }
 
 function Continue-Session {
@@ -457,7 +470,8 @@ function Continue-Session {
       Upload-RemoteFile -server $server -localPath $imageInfo.local_path -remotePath $remotePath
       if ($prompt) { $prompt = "@$($imageInfo.remote_ref) $prompt" } else { $prompt = "@$($imageInfo.remote_ref)" }
     } catch {
-      Send-Tg "远程图片上传失败: $($_.Exception.Message)"
+      $msg = Explain-RemoteUploadError -message $_.Exception.Message
+      Send-Tg $msg
       return
     }
   }

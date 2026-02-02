@@ -243,7 +243,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\<User>\bin\notify.p
 说明：
 - 可以直接**回复通知消息**继续对话（仅支持该会话的最新回复）
 - 支持图文回复（图片会保存到项目目录 `.notify` 下）
-- 远程会话图文回复需要 `scp`（或 PuTTY `pscp`）可用
+- 远程会话图文回复需要 `scp`（OpenSSH Client）或 PuTTY `pscp`
 
 ---
 

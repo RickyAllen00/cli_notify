@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 This project follows Semantic Versioning.
 
+## 0.1.3
+- Improve remote image upload guidance when scp/pscp is missing.
+
 ## 0.1.2
 - Support Telegram image replies for remote sessions (auto upload).
 
