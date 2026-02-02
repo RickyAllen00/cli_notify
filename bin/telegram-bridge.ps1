@@ -9,6 +9,7 @@ if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Forc
 $logFile = Join-Path $logDir "telegram-bridge.log"
 $offsetFile = Join-Path $logDir "telegram.offset"
 $stateFile = Join-Path $logDir "session-map.json"
+$tgMapFile = Join-Path $logDir "telegram-map.json"
 
 function Write-BridgeLog {
   param([string]$msg)
@@ -122,6 +123,265 @@ function Get-SessionState {
   } catch { return $null }
 }
 
+function Load-TelegramMap {
+  if (Test-Path $tgMapFile) {
+    try { return (Get-Content -Path $tgMapFile -Raw) | ConvertFrom-Json } catch {}
+  }
+  $state = [pscustomobject]@{}
+  $state | Add-Member -MemberType NoteProperty -Name messages -Value ([pscustomobject]@{})
+  $state | Add-Member -MemberType NoteProperty -Name sessions -Value ([pscustomobject]@{})
+  return $state
+}
+
+function Get-ReplyContext {
+  param([string]$replyMessageId)
+  $map = Load-TelegramMap
+  if (-not $map -or -not $map.messages) { return $null }
+  $msgProp = $map.messages.PSObject.Properties[$replyMessageId]
+  if (-not $msgProp) { return $null }
+  $msg = $msgProp.Value
+  $sessionId = $msg.session_id
+  $sess = $null
+  if ($map.sessions -and $sessionId) {
+    $sessProp = $map.sessions.PSObject.Properties[$sessionId]
+    if ($sessProp) { $sess = $sessProp.Value }
+  }
+  return [pscustomobject]@{
+    session_id = $sessionId
+    source = $msg.source
+    cwd = $msg.cwd
+    host = $msg.host
+    host_name = $msg.host_name
+    latest_message_id = if ($sess) { $sess.latest_message_id } else { $null }
+  }
+}
+
+function Get-MessageText {
+  param($msg)
+  if ($msg.text) { return $msg.text.Trim() }
+  if ($msg.caption) { return $msg.caption.Trim() }
+  return ""
+}
+
+function Get-MessageImageFileId {
+  param($msg)
+  try {
+    if ($msg.photo -and $msg.photo.Count -gt 0) {
+      return $msg.photo[-1].file_id
+    }
+    if ($msg.document -and $msg.document.mime_type -and $msg.document.mime_type -like "image/*") {
+      return $msg.document.file_id
+    }
+  } catch {}
+  return $null
+}
+
+function Get-TgFilePath {
+  param([string]$fileId)
+  if (-not $fileId) { return $null }
+  try {
+    $uri = "https://api.telegram.org/bot$token/getFile?file_id=$fileId"
+    $resp = Invoke-RestMethod -Method Get -Uri $uri
+    if ($resp -and $resp.result -and $resp.result.file_path) { return $resp.result.file_path }
+  } catch {}
+  return $null
+}
+
+function Save-MessageImage {
+  param($msg, [string]$cwd, [string]$sessionId)
+  $fileId = Get-MessageImageFileId -msg $msg
+  if (-not $fileId) { return $null }
+  $filePath = Get-TgFilePath -fileId $fileId
+  if (-not $filePath) { return $null }
+  $ext = [IO.Path]::GetExtension($filePath)
+  if (-not $ext) { $ext = ".jpg" }
+
+  $targetRoot = $cwd
+  $useRelative = $true
+  if (-not $targetRoot -or -not (Test-Path $targetRoot)) {
+    $targetRoot = $logDir
+    $useRelative = $false
+  }
+  $dir = Join-Path $targetRoot ".notify"
+  try { if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null } } catch {
+    $dir = $targetRoot
+    $useRelative = $false
+  }
+  $name = "tg_" + $msg.message_id + $ext
+  $dest = Join-Path $dir $name
+  $downloadUrl = "https://api.telegram.org/file/bot$token/$filePath"
+  try { Invoke-WebRequest -Uri $downloadUrl -OutFile $dest | Out-Null } catch { return $null }
+
+  if ($useRelative) {
+    return (".notify\\" + $name)
+  }
+  return $dest
+}
+
+function Escape-ForBashDoubleQuotes {
+  param([string]$s)
+  if (-not $s) { return $s }
+  $t = $s -replace '\\','\\\\'
+  $t = $t -replace '"','\\"'
+  $t = $t -replace '\$','\\$'
+  $t = $t -replace '`','\\`'
+  return $t
+}
+
+function Trim-Value {
+  param([string]$s)
+  if (-not $s) { return $null }
+  $t = $s.Trim()
+  if (($t.StartsWith('"') -and $t.EndsWith('"')) -or ($t.StartsWith("'") -and $t.EndsWith("'"))) {
+    if ($t.Length -ge 2) { return $t.Substring(1, $t.Length - 2) }
+  }
+  return $t
+}
+
+function Parse-ServersYaml {
+  param([string]$path)
+  $servers = @()
+  $current = $null
+  foreach ($line in Get-Content -Path $path -ErrorAction SilentlyContinue) {
+    $t = $line.Trim()
+    if (-not $t -or $t.StartsWith("#")) { continue }
+    if ($t -match '^\s*servers\s*:') { continue }
+    if ($t -match '^\s*-\s*(.*)$') {
+      if ($current) { $servers += $current }
+      $current = @{}
+      $rest = $Matches[1].Trim()
+      if ($rest -match '^\s*([^:#]+?)\s*:\s*(.*?)\s*$') {
+        $key = $Matches[1].Trim()
+        $val = Trim-Value $Matches[2]
+        if ($key) { $current[$key] = $val }
+      }
+      continue
+    }
+    if (-not $current) { continue }
+    if ($t -match '^\s*([^:#]+?)\s*:\s*(.*?)\s*$') {
+      $key = $Matches[1].Trim()
+      $val = Trim-Value $Matches[2]
+      if ($key) { $current[$key] = $val }
+    }
+  }
+  if ($current) { $servers += $current }
+  return $servers
+}
+
+function Load-Servers {
+  $candidates = @(
+    (Join-Path $PSScriptRoot "servers.yml"),
+    (Join-Path $PSScriptRoot "servers.yaml"),
+    "servers.yml",
+    "servers.yaml"
+  )
+  $path = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if (-not $path) { return $null }
+  return Parse-ServersYaml -path $path
+}
+
+function Find-Server {
+  param($ctx, $servers)
+  if (-not $servers) { return $null }
+  foreach ($s in $servers) {
+    if ($ctx.host -and $s.host -and ($s.host -ieq $ctx.host)) { return $s }
+    if ($ctx.host_name) {
+      if ($s.name -and ($s.name -ieq $ctx.host_name)) { return $s }
+      if ($s.label -and ($s.label -ieq $ctx.host_name)) { return $s }
+      if ($s.remark -and ($s.remark -ieq $ctx.host_name)) { return $s }
+    }
+    if ($ctx.host -and $s.name -and ($s.name -ieq $ctx.host)) { return $s }
+  }
+  return $null
+}
+
+function Is-LocalHost {
+  param([string]$host, [string]$hostName)
+  $local = $env:COMPUTERNAME
+  if (-not $host -and -not $hostName) { return $true }
+  if ($host -and $local -and ($host -ieq $local)) { return $true }
+  if ($hostName -and $local -and ($hostName -ieq $local)) { return $true }
+  if ($host -and ($host -eq "127.0.0.1" -or $host -eq "localhost")) { return $true }
+  return $false
+}
+
+function Build-RemoteCommand {
+  param([string]$tool, [string]$sessionId, [string]$prompt, [string]$cwd)
+  $promptEsc = Escape-ForBashDoubleQuotes $prompt
+  $cmd = ""
+  if ($tool -eq "claude") {
+    $cmd = "claude --resume $sessionId --print `"$promptEsc`""
+  } else {
+    $cmd = "codex exec resume $sessionId --skip-git-repo-check --json -c 'notify=[]' `"$promptEsc`""
+  }
+  if ($cwd) {
+    $cwdEsc = Escape-ForBashDoubleQuotes $cwd
+    $cmd = "cd `"$cwdEsc`" && $cmd"
+  }
+  return "bash -lc `"$cmd`""
+}
+
+function Start-RemoteCommand {
+  param($server, [string]$command)
+  $plink = Get-Command plink.exe -ErrorAction SilentlyContinue
+  $ssh = Get-Command ssh -ErrorAction SilentlyContinue
+  $host = $server.host
+  $user = $server.user
+  if (-not $user -and $server.username) { $user = $server.username }
+  $target = if ($user) { "$user@$host" } else { $host }
+  $port = $server.port
+  $key = $server.key
+  $password = $server.password
+
+  if ($password -and $plink) {
+    $args = @("-batch","-ssh",$target)
+    if ($port) { $args += @("-P",$port) }
+    if ($key) { $args += @("-i",$key) }
+    $args += @("-pw",$password,$command)
+    Start-Process -FilePath $plink.Source -ArgumentList $args -WindowStyle Hidden | Out-Null
+    return
+  }
+  if (-not $ssh) { throw "ssh not found in PATH." }
+  $args = @()
+  if ($port) { $args += @("-p",$port) }
+  if ($key) { $args += @("-i",$key) }
+  $args += @($target, $command)
+  Start-Process -FilePath $ssh.Source -ArgumentList $args -WindowStyle Hidden | Out-Null
+}
+
+function Continue-Session {
+  param($ctx, [string]$prompt)
+  $sessionId = $ctx.session_id
+  if (-not $sessionId -or $sessionId -eq "unknown") {
+    Send-Tg "无法定位会话，请使用 /codex 或 /claude 命令。"
+    return
+  }
+  $isClaude = $false
+  if ($ctx.source -and ($ctx.source -match 'Claude')) { $isClaude = $true }
+  $tool = if ($isClaude) { "claude" } else { "codex" }
+  if (Is-LocalHost -host $ctx.host -hostName $ctx.host_name) {
+    if ($isClaude) {
+      Start-Claude -sessionId $sessionId -prompt $prompt
+    } else {
+      Start-Codex -sessionId $sessionId -prompt $prompt
+    }
+    return
+  }
+  $servers = Load-Servers
+  $server = Find-Server -ctx $ctx -servers $servers
+  if (-not $server) {
+    Send-Tg "未找到远程服务器配置，请在 servers.yml 中添加对应主机。"
+    return
+  }
+  $cmd = Build-RemoteCommand -tool $tool -sessionId $sessionId -prompt $prompt -cwd $ctx.cwd
+  try {
+    Start-RemoteCommand -server $server -command $cmd
+    Send-Tg "已提交: 远程执行中…结果会自动推送"
+  } catch {
+    Send-Tg "远程执行失败: $($_.Exception.Message)"
+  }
+}
+
 function Start-Codex {
   param([string]$sessionId, [string]$prompt, [switch]$UseLast)
   if (-not $prompt) { Send-Tg "用法: /codex <问题>  或  /codex <会话ID> <问题>"; return }
@@ -207,15 +467,61 @@ while ($true) {
     $msg = $u.message
     if (-not $msg) { continue }
     if ($msg.chat.id -ne $chatId) { continue }
-    if (-not $msg.text) { continue }
+    $text = Get-MessageText -msg $msg
+    $hasText = -not [string]::IsNullOrWhiteSpace($text)
+    $replyId = $null
+    if ($msg.reply_to_message -and $msg.reply_to_message.message_id) { $replyId = [string]$msg.reply_to_message.message_id }
+    $hasImage = $false
+    if (Get-MessageImageFileId -msg $msg) { $hasImage = $true }
+    if (-not $hasText -and -not $hasImage) { continue }
 
-    $text = $msg.text.Trim()
-    if ($text -match '^(?i)/help') {
+    $isCommand = $false
+    if ($hasText -and $text -match '^(?i)/(help|codex|claude)\b') { $isCommand = $true }
+    if ($hasText -and $text -match '^(?i)/help') {
       Send-Tg "/codex <问题>  或  /codex <会话ID> <问题>\n/claude <问题>  或  /claude <会话ID> <问题>\n/codex last <问题> | /claude last <问题>"
       continue
     }
 
-    if ($text -match '^(?i)/codex\b(.*)$') {
+    if ($replyId -and -not $isCommand) {
+      $ctx = Get-ReplyContext -replyMessageId $replyId
+      if (-not $ctx) {
+        Send-Tg "请回复机器人推送消息（包含会话信息）。"
+        continue
+      }
+      if ($ctx.latest_message_id -and ([string]$ctx.latest_message_id -ne $replyId)) {
+        Send-Tg "仅支持回复该会话中最新的模型回复。"
+        continue
+      }
+      if (-not $ctx.session_id -or $ctx.session_id -eq "unknown") {
+        Send-Tg "无法定位会话，请使用 /codex 或 /claude 命令。"
+        continue
+      }
+
+      $isRemote = -not (Is-LocalHost -host $ctx.host -hostName $ctx.host_name)
+      if ($isRemote -and $hasImage) {
+        Send-Tg "远程会话暂不支持图片回复，请发送纯文本。"
+        continue
+      }
+
+      $cwd = $ctx.cwd
+      if (-not $cwd) { $cwd = (Get-Location).Path }
+      $imageRef = $null
+      if (-not $isRemote) { $imageRef = Save-MessageImage -msg $msg -cwd $cwd -sessionId $ctx.session_id }
+
+      $prompt = $text
+      if ($imageRef) {
+        if ($prompt) { $prompt = "@$imageRef $prompt" } else { $prompt = "@$imageRef" }
+      }
+      if (-not $prompt) {
+        Send-Tg "请输入文字或图片。"
+        continue
+      }
+
+      Continue-Session -ctx $ctx -prompt $prompt
+      continue
+    }
+
+    if ($hasText -and $text -match '^(?i)/codex\b(.*)$') {
       $rest = $Matches[1].Trim()
       if (-not $rest) { Send-Tg "用法: /codex <问题>  或  /codex <会话ID> <问题>"; continue }
       if ($rest -match '^(?i)last\s+(.+)$') {
@@ -228,7 +534,7 @@ while ($true) {
       continue
     }
 
-    if ($text -match '^(?i)/claude\b(.*)$') {
+    if ($hasText -and $text -match '^(?i)/claude\b(.*)$') {
       $rest = $Matches[1].Trim()
       if (-not $rest) { Send-Tg "用法: /claude <问题>  或  /claude <会话ID> <问题>"; continue }
       if ($rest -match '^(?i)last\s+(.+)$') {

@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 This project follows Semantic Versioning.
 
+## 0.1.1
+- Add Telegram reply-to-continue for latest session (text/image).
+
 ## 0.1.0
 - Add EXE installer builder and GUI setup wizard.
 - Add GUI configuration entry from tray.

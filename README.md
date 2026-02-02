@@ -11,6 +11,7 @@
 - Windows Toast 通知（BurntToast）
 - 企业微信机器人 / Telegram Bot 推送
 - Telegram 端闭环控制 Codex / Claude
+- Telegram 直接回复通知继续会话（仅支持该会话最新回复，支持图文）
 - 托盘菜单：一键开关通道 + 调试日志
 - 可选：HTTP 通知服务端，支持多台 Linux Codex 推送到 Windows
 
@@ -239,6 +240,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\<User>\bin\notify.p
 /claude <会话ID> <问题>
 /claude last <问题>
 ```
+说明：
+- 可以直接**回复通知消息**继续对话（仅支持该会话的最新回复）
+- 支持图文回复（图片会保存到项目目录 `.notify` 下）
 
 ---
 

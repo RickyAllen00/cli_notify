@@ -250,6 +250,16 @@ function Get-HostName {
   return $null
 }
 
+function Get-HostRaw {
+  param($p)
+  if ($p) {
+    foreach ($k in @("host","hostname","machine","node","computer")) {
+      if ($p.$k) { return $p.$k }
+    }
+  }
+  return $null
+}
+
 function Normalize-Reply {
   param([string]$text, [int]$max)
   if (-not $text) { return "(无内容)" }
@@ -296,6 +306,59 @@ function Update-SessionMap {
     $state | ConvertTo-Json -Depth 6 | Set-Content -Path $stateFile -Encoding UTF8
   } catch {}
 }
+$tgMapFile = Join-Path $logDir "telegram-map.json"
+function Load-TelegramMap {
+  if (Test-Path $tgMapFile) {
+    try { return (Get-Content -Path $tgMapFile -Raw) | ConvertFrom-Json } catch {}
+  }
+  $state = [pscustomobject]@{}
+  $state | Add-Member -MemberType NoteProperty -Name messages -Value ([pscustomobject]@{})
+  $state | Add-Member -MemberType NoteProperty -Name sessions -Value ([pscustomobject]@{})
+  return $state
+}
+
+function Save-TelegramMap {
+  param($state)
+  try { $state | ConvertTo-Json -Depth 8 | Set-Content -Path $tgMapFile -Encoding UTF8 } catch {}
+}
+
+function Update-TelegramMap {
+  param(
+    [string]$sessionId,
+    [string]$source,
+    [string]$cwd,
+    [string]$host,
+    [string]$hostName,
+    [string]$messageId,
+    [string]$time
+  )
+  if (-not $sessionId -or -not $messageId) { return }
+  $state = Load-TelegramMap
+  if (-not $state.messages) { $state | Add-Member -MemberType NoteProperty -Name messages -Value ([pscustomobject]@{}) -Force }
+  if (-not $state.sessions) { $state | Add-Member -MemberType NoteProperty -Name sessions -Value ([pscustomobject]@{}) -Force }
+
+  $entry = [pscustomobject]@{ session_id = $sessionId; source = $source; cwd = $cwd; host = $host; host_name = $hostName; time = $time }
+  $state.messages | Add-Member -MemberType NoteProperty -Name $messageId -Value $entry -Force
+
+  $sentry = [pscustomobject]@{ latest_message_id = $messageId; source = $source; cwd = $cwd; host = $host; host_name = $hostName; time = $time }
+  $state.sessions | Add-Member -MemberType NoteProperty -Name $sessionId -Value $sentry -Force
+
+  # keep only last 200 messages
+  try {
+    $entries = @()
+    foreach ($p in $state.messages.PSObject.Properties) {
+      $entries += [pscustomobject]@{ Name = $p.Name; Time = $p.Value.time }
+    }
+    $entries = $entries | Sort-Object Time -Descending
+    if ($entries.Count -gt 200) {
+      $entries | Select-Object -Skip 200 | ForEach-Object {
+        $state.messages.PSObject.Properties.Remove($_.Name)
+      }
+    }
+  } catch {}
+
+  Save-TelegramMap -state $state
+}
 $sessionId = Get-SessionId -p $payload
 $projectPath = Get-ProjectPath -p $payload
 $endTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
@@ -323,12 +386,17 @@ if ($payload) {
 }
 
 # Only push host (optional) + session id + project path + end time + last reply
-$hostName = Get-HostName -p $payload
-if (-not $hostName) {
-  $hostName = Get-NotifySetting -name "NOTIFY_HOST_NAME" -cfg $notifyConfig
-  if (-not $hostName) { $hostName = Get-NotifySetting -name "NOTIFY_HOST" -cfg $notifyConfig }
-  if (-not $hostName -and $env:COMPUTERNAME) { $hostName = $env:COMPUTERNAME }
+$hostRaw = Get-HostRaw -p $payload
+$hostLabel = Get-HostName -p $payload
+if (-not $hostRaw) {
+  $hostRaw = Get-NotifySetting -name "NOTIFY_HOST" -cfg $notifyConfig
+  if (-not $hostRaw -and $env:COMPUTERNAME) { $hostRaw = $env:COMPUTERNAME }
 }
+if (-not $hostLabel) {
+  $hostLabel = Get-NotifySetting -name "NOTIFY_HOST_NAME" -cfg $notifyConfig
+}
+$hostName = $hostLabel
+if (-not $hostName) { $hostName = $hostRaw }
 $hostLine = $null
 if ($hostName) { $hostLine = "主机: $hostName" }
 
@@ -405,18 +473,24 @@ if (Test-Path $flagTg) {
     function Send-TgChunk {
       param([string]$text)
       $tgPayload = @{ chat_id = $tgChat; text = $text } | ConvertTo-Json
-      Invoke-RestMethod -Method Post -Uri $tgUri -ContentType 'application/json; charset=utf-8' -Body $tgPayload | Out-Null
+      $resp = Invoke-RestMethod -Method Post -Uri $tgUri -ContentType 'application/json; charset=utf-8' -Body $tgPayload
+      try {
+        if ($resp -and $resp.result -and $resp.result.message_id) { return [string]$resp.result.message_id }
+      } catch {}
+      return $null
     }
 
     try {
       $maxLen = 3500
       if ($tgText.Length -le $maxLen) {
-        Send-TgChunk -text $tgText
+        $mid = Send-TgChunk -text $tgText
+        if ($mid) { Update-TelegramMap -sessionId $sessionId -source $Source -cwd $projectPath -host $hostRaw -hostName $hostName -messageId $mid -time $endTime }
       } else {
         for ($i = 0; $i -lt $tgText.Length; $i += $maxLen) {
           $len = [Math]::Min($maxLen, $tgText.Length - $i)
           $part = $tgText.Substring($i, $len)
-          Send-TgChunk -text $part
+          $mid = Send-TgChunk -text $part
+          if ($mid) { Update-TelegramMap -sessionId $sessionId -source $Source -cwd $projectPath -host $hostRaw -hostName $hostName -messageId $mid -time $endTime }
         }
       }
       Write-NotifyLog -Channel "telegram" -Status "ok" -Message $Title
