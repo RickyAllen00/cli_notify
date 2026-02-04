@@ -322,12 +322,25 @@ function Save-TelegramMap {
   try { $state | ConvertTo-Json -Depth 8 | Set-Content -Path $tgMapFile -Encoding UTF8 } catch {}
 }
 
+function Get-TelegramThreadId {
+  param([string]$sessionId)
+  if (-not $sessionId) { return $null }
+  if (-not (Test-Path $tgMapFile)) { return $null }
+  try {
+    $state = (Get-Content -Path $tgMapFile -Raw) | ConvertFrom-Json
+    if (-not $state -or -not $state.sessions) { return $null }
+    $prop = $state.sessions.PSObject.Properties[$sessionId]
+    if ($prop -and $prop.Value.thread_id) { return $prop.Value.thread_id }
+  } catch {}
+  return $null
+}
+
 function Update-TelegramMap {
   param(
     [string]$sessionId,
     [string]$source,
     [string]$cwd,
-    [string]$host,
+    [string]$hostRaw,
     [string]$hostName,
     [string]$messageId,
     [string]$time
@@ -337,10 +350,23 @@ function Update-TelegramMap {
   if (-not $state.messages) { $state | Add-Member -MemberType NoteProperty -Name messages -Value ([pscustomobject]@{}) -Force }
   if (-not $state.sessions) { $state | Add-Member -MemberType NoteProperty -Name sessions -Value ([pscustomobject]@{}) -Force }
 
-  $entry = [pscustomobject]@{ session_id = $sessionId; source = $source; cwd = $cwd; host = $host; host_name = $hostName; time = $time }
+  $entry = [pscustomobject]@{ session_id = $sessionId; source = $source; cwd = $cwd; host = $hostRaw; host_name = $hostName; time = $time }
   $state.messages | Add-Member -MemberType NoteProperty -Name $messageId -Value $entry -Force
 
-  $sentry = [pscustomobject]@{ latest_message_id = $messageId; source = $source; cwd = $cwd; host = $host; host_name = $hostName; time = $time }
+  $threadId = $null
+  try {
+    $existing = $state.sessions.PSObject.Properties[$sessionId]
+    if ($existing -and $existing.Value.thread_id) { $threadId = $existing.Value.thread_id }
+  } catch {}
+  $sentry = [pscustomobject]@{
+    latest_message_id = $messageId
+    source = $source
+    cwd = $cwd
+    host = $hostRaw
+    host_name = $hostName
+    time = $time
+    thread_id = $threadId
+  }
   $state.sessions | Add-Member -MemberType NoteProperty -Name $sessionId -Value $sentry -Force
 
   # keep only last 200 messages
@@ -469,10 +495,15 @@ if (Test-Path $flagTg) {
   if ($tgToken -and $tgChat) {
     $tgText = if ($hostLine) { "$hostLine`n会话ID: $sessionId`n项目: $projectPath`n结束: $endTime`n回复: $snippet" } else { "会话ID: $sessionId`n项目: $projectPath`n结束: $endTime`n回复: $snippet" }
     $tgUri = "https://api.telegram.org/bot$tgToken/sendMessage"
+    $tgThreadId = Get-TelegramThreadId -sessionId $sessionId
 
     function Send-TgChunk {
       param([string]$text)
-      $tgPayload = @{ chat_id = $tgChat; text = $text } | ConvertTo-Json
+      $tgPayload = @{ chat_id = $tgChat; text = $text }
+      if ($tgThreadId) {
+        try { $tgPayload.message_thread_id = [int]$tgThreadId } catch {}
+      }
+      $tgPayload = $tgPayload | ConvertTo-Json
       $resp = Invoke-RestMethod -Method Post -Uri $tgUri -ContentType 'application/json; charset=utf-8' -Body $tgPayload
       try {
         if ($resp -and $resp.result -and $resp.result.message_id) { return [string]$resp.result.message_id }
@@ -484,13 +515,13 @@ if (Test-Path $flagTg) {
       $maxLen = 3500
       if ($tgText.Length -le $maxLen) {
         $mid = Send-TgChunk -text $tgText
-        if ($mid) { Update-TelegramMap -sessionId $sessionId -source $Source -cwd $projectPath -host $hostRaw -hostName $hostName -messageId $mid -time $endTime }
+        if ($mid) { Update-TelegramMap -sessionId $sessionId -source $Source -cwd $projectPath -hostRaw $hostRaw -hostName $hostName -messageId $mid -time $endTime }
       } else {
         for ($i = 0; $i -lt $tgText.Length; $i += $maxLen) {
           $len = [Math]::Min($maxLen, $tgText.Length - $i)
           $part = $tgText.Substring($i, $len)
           $mid = Send-TgChunk -text $part
-          if ($mid) { Update-TelegramMap -sessionId $sessionId -source $Source -cwd $projectPath -host $hostRaw -hostName $hostName -messageId $mid -time $endTime }
+          if ($mid) { Update-TelegramMap -sessionId $sessionId -source $Source -cwd $projectPath -hostRaw $hostRaw -hostName $hostName -messageId $mid -time $endTime }
         }
       }
       Write-NotifyLog -Channel "telegram" -Status "ok" -Message $Title

@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file.
 This project follows Semantic Versioning.
 
+## 0.1.4
+- Fix Telegram reply continuation in topic/thread chats (message_thread_id).
+- Improve reply context fallback when Telegram reply metadata is missing.
+- Fix bridge launching arguments to prevent prompt truncation.
+
 ## 0.1.3
 - Improve remote image upload guidance when scp/pscp is missing.
 

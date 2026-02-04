@@ -92,11 +92,15 @@ if (-not $token -or -not $chatId) {
 }
 
 function Send-Tg {
-  param([string]$text)
+  param([string]$text, [string]$threadId)
   try {
     $uri = "https://api.telegram.org/bot$token/sendMessage"
-    $payload = @{ chat_id = $chatId; text = $text } | ConvertTo-Json
-    Invoke-RestMethod -Method Post -Uri $uri -ContentType 'application/json; charset=utf-8' -Body $payload | Out-Null
+    $payload = @{ chat_id = $chatId; text = $text }
+    if ($threadId) {
+      try { $payload.message_thread_id = [int]$threadId } catch {}
+    }
+    $body = $payload | ConvertTo-Json
+    Invoke-RestMethod -Method Post -Uri $uri -ContentType 'application/json; charset=utf-8' -Body $body | Out-Null
   } catch {
     Write-BridgeLog ("send fail: " + $_.Exception.Message)
   }
@@ -133,6 +137,27 @@ function Load-TelegramMap {
   return $state
 }
 
+function Save-TelegramMap {
+  param($state)
+  try { $state | ConvertTo-Json -Depth 8 | Set-Content -Path $tgMapFile -Encoding UTF8 } catch {}
+}
+
+function Update-SessionThreadId {
+  param([string]$sessionId, [string]$threadId)
+  if (-not $sessionId -or -not $threadId) { return }
+  $map = Load-TelegramMap
+  if (-not $map) { return }
+  if (-not $map.sessions) { $map | Add-Member -MemberType NoteProperty -Name sessions -Value ([pscustomobject]@{}) -Force }
+  $prop = $map.sessions.PSObject.Properties[$sessionId]
+  if ($prop) {
+    $prop.Value | Add-Member -MemberType NoteProperty -Name thread_id -Value $threadId -Force
+  } else {
+    $entry = [pscustomobject]@{ thread_id = $threadId }
+    $map.sessions | Add-Member -MemberType NoteProperty -Name $sessionId -Value $entry -Force
+  }
+  Save-TelegramMap -state $map
+}
+
 function Get-ReplyContext {
   param([string]$replyMessageId)
   $map = Load-TelegramMap
@@ -153,6 +178,55 @@ function Get-ReplyContext {
     host = $msg.host
     host_name = $msg.host_name
     latest_message_id = if ($sess) { $sess.latest_message_id } else { $null }
+    thread_id = if ($sess) { $sess.thread_id } else { $null }
+  }
+}
+
+function Get-ReplyContextFromMessage {
+  param($replyMsg)
+  if (-not $replyMsg) { return $null }
+
+  $text = $null
+  if ($replyMsg.text) { $text = $replyMsg.text }
+  elseif ($replyMsg.caption) { $text = $replyMsg.caption }
+  if (-not $text) { return $null }
+
+  $sessionId = $null
+  if ($text -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+    $sessionId = $Matches[1]
+  }
+  if (-not $sessionId) { return $null }
+
+  $cwd = $null
+  $hostName = $null
+  $hostRaw = $null
+  foreach ($line in ($text -split "`r?`n")) {
+    $t = $line.Trim()
+    if (-not $t) { continue }
+    if ($t -match '^主机\s*[:：]\s*(.+)$') {
+      $hostName = $Matches[1].Trim()
+      if (-not $hostRaw) { $hostRaw = $hostName }
+      continue
+    }
+    if ($t -match '^(项目|project)\s*[:：]\s*(.+)$') {
+      $cwd = $Matches[2].Trim()
+      continue
+    }
+    if ($t -match '^host\s*[:：]\s*(.+)$') {
+      $hostName = $Matches[1].Trim()
+      if (-not $hostRaw) { $hostRaw = $hostName }
+      continue
+    }
+  }
+
+  return [pscustomobject]@{
+    session_id = $sessionId
+    source = $null
+    cwd = $cwd
+    host = $hostRaw
+    host_name = $hostName
+    latest_message_id = $null
+    thread_id = $null
   }
 }
 
@@ -300,12 +374,12 @@ function Find-Server {
 }
 
 function Is-LocalHost {
-  param([string]$host, [string]$hostName)
+  param([string]$hostRaw, [string]$hostName)
   $local = $env:COMPUTERNAME
-  if (-not $host -and -not $hostName) { return $true }
-  if ($host -and $local -and ($host -ieq $local)) { return $true }
+  if (-not $hostRaw -and -not $hostName) { return $true }
+  if ($hostRaw -and $local -and ($hostRaw -ieq $local)) { return $true }
   if ($hostName -and $local -and ($hostName -ieq $local)) { return $true }
-  if ($host -and ($host -eq "127.0.0.1" -or $host -eq "localhost")) { return $true }
+  if ($hostRaw -and ($hostRaw -eq "127.0.0.1" -or $hostRaw -eq "localhost")) { return $true }
   return $false
 }
 
@@ -335,10 +409,10 @@ function Invoke-RemoteCommandSync {
   param($server, [string]$command)
   $plink = Get-Command plink.exe -ErrorAction SilentlyContinue
   $ssh = Get-Command ssh -ErrorAction SilentlyContinue
-  $host = $server.host
+  $hostAddr = $server.host
   $user = $server.user
   if (-not $user -and $server.username) { $user = $server.username }
-  $target = if ($user) { "$user@$host" } else { $host }
+  $target = if ($user) { "$user@$hostAddr" } else { $hostAddr }
   $port = $server.port
   $key = $server.key
   $password = $server.password
@@ -363,10 +437,10 @@ function Upload-RemoteFile {
   param($server, [string]$localPath, [string]$remotePath)
   $pscp = Get-Command pscp.exe -ErrorAction SilentlyContinue
   $scp = Get-Command scp -ErrorAction SilentlyContinue
-  $host = $server.host
+  $hostAddr = $server.host
   $user = $server.user
   if (-not $user -and $server.username) { $user = $server.username }
-  $target = if ($user) { "$user@$host" } else { $host }
+  $target = if ($user) { "$user@$hostAddr" } else { $hostAddr }
   $port = $server.port
   $key = $server.key
   $password = $server.password
@@ -392,10 +466,10 @@ function Start-RemoteCommand {
   param($server, [string]$command)
   $plink = Get-Command plink.exe -ErrorAction SilentlyContinue
   $ssh = Get-Command ssh -ErrorAction SilentlyContinue
-  $host = $server.host
+  $hostAddr = $server.host
   $user = $server.user
   if (-not $user -and $server.username) { $user = $server.username }
-  $target = if ($user) { "$user@$host" } else { $host }
+  $target = if ($user) { "$user@$hostAddr" } else { $hostAddr }
   $port = $server.port
   $key = $server.key
   $password = $server.password
@@ -429,16 +503,16 @@ function Explain-RemoteUploadError {
 }
 
 function Continue-Session {
-  param($ctx, [string]$prompt, $imageInfo)
+  param($ctx, [string]$prompt, $imageInfo, [string]$ThreadId)
   $sessionId = $ctx.session_id
   if (-not $sessionId -or $sessionId -eq "unknown") {
-    Send-Tg "无法定位会话，请使用 /codex 或 /claude 命令。"
+    Send-Tg "无法定位会话，请使用 /codex 或 /claude 命令。" $ThreadId
     return
   }
   $isClaude = $false
   if ($ctx.source -and ($ctx.source -match 'Claude')) { $isClaude = $true }
   $tool = if ($isClaude) { "claude" } else { "codex" }
-  $isLocal = Is-LocalHost -host $ctx.host -hostName $ctx.host_name
+  $isLocal = Is-LocalHost -hostRaw $ctx.host -hostName $ctx.host_name
 
   if ($imageInfo) {
     if ($isLocal) {
@@ -448,16 +522,16 @@ function Continue-Session {
 
   if ($isLocal) {
     if ($isClaude) {
-      Start-Claude -sessionId $sessionId -prompt $prompt
+      Start-Claude -sessionId $sessionId -prompt $prompt -ThreadId $ThreadId
     } else {
-      Start-Codex -sessionId $sessionId -prompt $prompt
+      Start-Codex -sessionId $sessionId -prompt $prompt -ThreadId $ThreadId
     }
     return
   }
   $servers = Load-Servers
   $server = Find-Server -ctx $ctx -servers $servers
   if (-not $server) {
-    Send-Tg "未找到远程服务器配置，请在 servers.yml 中添加对应主机。"
+    Send-Tg "未找到远程服务器配置，请在 servers.yml 中添加对应主机。" $ThreadId
     return
   }
   if ($imageInfo) {
@@ -471,22 +545,22 @@ function Continue-Session {
       if ($prompt) { $prompt = "@$($imageInfo.remote_ref) $prompt" } else { $prompt = "@$($imageInfo.remote_ref)" }
     } catch {
       $msg = Explain-RemoteUploadError -message $_.Exception.Message
-      Send-Tg $msg
+      Send-Tg $msg $ThreadId
       return
     }
   }
   $cmd = Build-RemoteCommand -tool $tool -sessionId $sessionId -prompt $prompt -cwd $ctx.cwd
   try {
     Start-RemoteCommand -server $server -command $cmd
-    Send-Tg "已提交: 远程执行中…结果会自动推送"
+    Send-Tg "已提交: 远程执行中…结果会自动推送" $ThreadId
   } catch {
-    Send-Tg "远程执行失败: $($_.Exception.Message)"
+    Send-Tg "远程执行失败: $($_.Exception.Message)" $ThreadId
   }
 }
 
 function Start-Codex {
-  param([string]$sessionId, [string]$prompt, [switch]$UseLast)
-  if (-not $prompt) { Send-Tg "用法: /codex <问题>  或  /codex <会话ID> <问题>"; return }
+  param([string]$sessionId, [string]$prompt, [switch]$UseLast, [string]$ThreadId)
+  if (-not $prompt) { Send-Tg "用法: /codex <问题>  或  /codex <会话ID> <问题>" $ThreadId; return }
 
   $cwd = $null
   if ($sessionId) {
@@ -506,17 +580,17 @@ function Start-Codex {
   $argLine = Format-ArgsForLog $cmdArgs
   Write-BridgeLog ("codex: powershell " + $argLine + " | cwd=" + $cwd)
   try {
-    Start-Process -FilePath "powershell.exe" -ArgumentList $cmdArgs -WindowStyle Hidden | Out-Null
-    Send-Tg "已提交: Codex 执行中…结果会自动推送"
+    Start-Process -FilePath "powershell.exe" -ArgumentList $argLine -WindowStyle Hidden | Out-Null
+    Send-Tg "已提交: Codex 执行中…结果会自动推送" $ThreadId
   } catch {
     Write-BridgeLog ("codex start fail: " + $_.Exception.Message)
-    Send-Tg "启动 Codex 失败: $($_.Exception.Message)"
+    Send-Tg "启动 Codex 失败: $($_.Exception.Message)" $ThreadId
   }
 }
 
 function Start-Claude {
-  param([string]$sessionId, [string]$prompt, [switch]$UseLast)
-  if (-not $prompt) { Send-Tg "用法: /claude <问题>  或  /claude <会话ID> <问题>"; return }
+  param([string]$sessionId, [string]$prompt, [switch]$UseLast, [string]$ThreadId)
+  if (-not $prompt) { Send-Tg "用法: /claude <问题>  或  /claude <会话ID> <问题>" $ThreadId; return }
 
   $cwd = $null
   if ($sessionId) {
@@ -536,11 +610,11 @@ function Start-Claude {
   $argLine = Format-ArgsForLog $cmdArgs
   Write-BridgeLog ("claude: powershell " + $argLine + " | cwd=" + $cwd)
   try {
-    Start-Process -FilePath "powershell.exe" -ArgumentList $cmdArgs -WindowStyle Hidden | Out-Null
-    Send-Tg "已提交: Claude 执行中…结果会自动推送"
+    Start-Process -FilePath "powershell.exe" -ArgumentList $argLine -WindowStyle Hidden | Out-Null
+    Send-Tg "已提交: Claude 执行中…结果会自动推送" $ThreadId
   } catch {
     Write-BridgeLog ("claude start fail: " + $_.Exception.Message)
-    Send-Tg "启动 Claude 失败: $($_.Exception.Message)"
+    Send-Tg "启动 Claude 失败: $($_.Exception.Message)" $ThreadId
   }
 }
 
@@ -569,6 +643,8 @@ while ($true) {
     $msg = $u.message
     if (-not $msg) { continue }
     if ($msg.chat.id -ne $chatId) { continue }
+    $threadId = $null
+    if ($msg.message_thread_id) { $threadId = [string]$msg.message_thread_id }
     $text = Get-MessageText -msg $msg
     $hasText = -not [string]::IsNullOrWhiteSpace($text)
     $replyId = $null
@@ -580,26 +656,46 @@ while ($true) {
     $isCommand = $false
     if ($hasText -and $text -match '^(?i)/(help|codex|claude)\b') { $isCommand = $true }
     if ($hasText -and $text -match '^(?i)/help') {
-      Send-Tg "/codex <问题>  或  /codex <会话ID> <问题>\n/claude <问题>  或  /claude <会话ID> <问题>\n/codex last <问题> | /claude last <问题>"
+      Send-Tg "/codex <问题>  或  /codex <会话ID> <问题>\n/claude <问题>  或  /claude <会话ID> <问题>\n/codex last <问题> | /claude last <问题>" $threadId
       continue
     }
 
     if ($replyId -and -not $isCommand) {
       $ctx = Get-ReplyContext -replyMessageId $replyId
       if (-not $ctx) {
-        Send-Tg "请回复机器人推送消息（包含会话信息）。"
+        $ctx = Get-ReplyContextFromMessage -replyMsg $msg.reply_to_message
+        if ($ctx -and $ctx.session_id) {
+          $stateEntry = Get-SessionState -sessionId $ctx.session_id
+          if ($stateEntry) {
+            if (-not $ctx.cwd -and $stateEntry.cwd) { $ctx.cwd = $stateEntry.cwd }
+            if (-not $ctx.source -and $stateEntry.source) { $ctx.source = $stateEntry.source }
+          }
+          if (-not $ctx.latest_message_id) {
+            try {
+              $map = Load-TelegramMap
+              if ($map -and $map.sessions) {
+                $prop = $map.sessions.PSObject.Properties[$ctx.session_id]
+                if ($prop -and $prop.Value.latest_message_id) { $ctx.latest_message_id = $prop.Value.latest_message_id }
+              }
+            } catch {}
+          }
+        }
+      }
+      if (-not $ctx) {
+        Write-BridgeLog ("reply context missing: replyId=" + $replyId)
+        Send-Tg "请回复机器人推送消息（包含会话信息）。" $threadId
         continue
       }
       if ($ctx.latest_message_id -and ([string]$ctx.latest_message_id -ne $replyId)) {
-        Send-Tg "仅支持回复该会话中最新的模型回复。"
+        Send-Tg "仅支持回复该会话中最新的模型回复。" $threadId
         continue
       }
       if (-not $ctx.session_id -or $ctx.session_id -eq "unknown") {
-        Send-Tg "无法定位会话，请使用 /codex 或 /claude 命令。"
+        Send-Tg "无法定位会话，请使用 /codex 或 /claude 命令。" $threadId
         continue
       }
 
-      $isRemote = -not (Is-LocalHost -host $ctx.host -hostName $ctx.host_name)
+      $isRemote = -not (Is-LocalHost -hostRaw $ctx.host -hostName $ctx.host_name)
 
       $cwd = $ctx.cwd
       if (-not $cwd) { $cwd = (Get-Location).Path }
@@ -614,36 +710,40 @@ while ($true) {
 
       $prompt = $text
       if (-not $prompt -and -not $imageInfo) {
-        Send-Tg "请输入文字或图片。"
+        Send-Tg "请输入文字或图片。" $threadId
         continue
       }
 
-      Continue-Session -ctx $ctx -prompt $prompt -imageInfo $imageInfo
+      if ($threadId) {
+        $ctx | Add-Member -MemberType NoteProperty -Name thread_id -Value $threadId -Force
+        Update-SessionThreadId -sessionId $ctx.session_id -threadId $threadId
+      }
+      Continue-Session -ctx $ctx -prompt $prompt -imageInfo $imageInfo -ThreadId $threadId
       continue
     }
 
     if ($hasText -and $text -match '^(?i)/codex\b(.*)$') {
       $rest = $Matches[1].Trim()
-      if (-not $rest) { Send-Tg "用法: /codex <问题>  或  /codex <会话ID> <问题>"; continue }
+      if (-not $rest) { Send-Tg "用法: /codex <问题>  或  /codex <会话ID> <问题>" $threadId; continue }
       if ($rest -match '^(?i)last\s+(.+)$') {
-        Start-Codex -UseLast -prompt $Matches[1]
+        Start-Codex -UseLast -prompt $Matches[1] -ThreadId $threadId
       } elseif ($rest -match '^([0-9a-fA-F\-]{36})\s+(.+)$') {
-        Start-Codex -sessionId $Matches[1] -prompt $Matches[2]
+        Start-Codex -sessionId $Matches[1] -prompt $Matches[2] -ThreadId $threadId
       } else {
-        Start-Codex -UseLast -prompt $rest
+        Start-Codex -UseLast -prompt $rest -ThreadId $threadId
       }
       continue
     }
 
     if ($hasText -and $text -match '^(?i)/claude\b(.*)$') {
       $rest = $Matches[1].Trim()
-      if (-not $rest) { Send-Tg "用法: /claude <问题>  或  /claude <会话ID> <问题>"; continue }
+      if (-not $rest) { Send-Tg "用法: /claude <问题>  或  /claude <会话ID> <问题>" $threadId; continue }
       if ($rest -match '^(?i)last\s+(.+)$') {
-        Start-Claude -UseLast -prompt $Matches[1]
+        Start-Claude -UseLast -prompt $Matches[1] -ThreadId $threadId
       } elseif ($rest -match '^([0-9a-fA-F\-]{36})\s+(.+)$') {
-        Start-Claude -sessionId $Matches[1] -prompt $Matches[2]
+        Start-Claude -sessionId $Matches[1] -prompt $Matches[2] -ThreadId $threadId
       } else {
-        Start-Claude -UseLast -prompt $rest
+        Start-Claude -UseLast -prompt $rest -ThreadId $threadId
       }
       continue
     }
