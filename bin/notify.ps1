@@ -87,9 +87,13 @@ $debugEnabled = Test-Path $flagDebug
 
 # Log setup (keep only 1 day) if debug enabled
 $logDir = Join-Path $env:LOCALAPPDATA "notify"
+try {
+  if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
+  }
+} catch {}
 $logFile = Join-Path $logDir ("notify-" + (Get-Date -Format 'yyyyMMdd') + ".log")
 if ($debugEnabled) {
-  try { if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null } } catch {}
   try {
     Get-ChildItem -Path $logDir -Filter "notify-*.log" -ErrorAction SilentlyContinue |
       Where-Object { $_.LastWriteTime -lt (Get-Date).Date.AddDays(-1) } |
