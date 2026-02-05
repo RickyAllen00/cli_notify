@@ -205,11 +205,14 @@ function Write-EmbeddedFiles {
 
 function Install-Payload {
   param([string]$targetDir)
-  $sourceDir = $PSScriptRoot
-  $hasLocal = Test-Path (Join-Path $sourceDir "notify.ps1")
   if ($EmbeddedFiles.Count -gt 0) {
     Write-EmbeddedFiles -targetDir $targetDir
     return
+  }
+  $sourceDir = $PSScriptRoot
+  $hasLocal = $false
+  if (-not [string]::IsNullOrWhiteSpace($sourceDir)) {
+    $hasLocal = Test-Path (Join-Path $sourceDir "notify.ps1")
   }
   if ($hasLocal) {
     Get-ChildItem -Path $sourceDir -File | Where-Object { $_.Name -ne "notify-setup.ps1" } | ForEach-Object {
