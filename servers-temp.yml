@@ -1,0 +1,5 @@
+servers:
+  - host: modelapi
+    user: zhengweibin
+  - host: rag.pospalit.com
+    user: zhoutaojian
