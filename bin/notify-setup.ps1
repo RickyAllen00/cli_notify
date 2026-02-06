@@ -117,6 +117,7 @@ function Ensure-EnvTemplate {
     "WECOM_WEBHOOK=",
     "TELEGRAM_BOT_TOKEN=",
     "TELEGRAM_CHAT_ID=",
+    "TELEGRAM_PROXY=",
     "NOTIFY_SERVER_TOKEN=",
     "NOTIFY_SERVER_PREFIX=",
     "NOTIFY_SERVER_PORT=",

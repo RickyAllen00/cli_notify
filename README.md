@@ -81,6 +81,7 @@ Windows 侧在安装向导中勾选“远程通知服务端”即可。
 ## Troubleshooting
 - Windows 通知无效：确认 BurntToast 安装、系统通知未关闭
 - Telegram 无响应：确认 Bot Token / Chat ID 正确
+- Telegram 连接超时/被墙：在 `.env` 里设置 `TELEGRAM_PROXY=http://127.0.0.1:7890`（HTTP/HTTPS 代理地址）
 - 远程图片失败：请安装 OpenSSH Client 或 PuTTY（pscp）并加入 PATH
 
 ## 维护者：构建与发布

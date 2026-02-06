@@ -82,9 +82,23 @@ function Get-NotifySetting {
   return (Get-EnvUser $name)
 }
 
+function Normalize-ProxyUri {
+  param([string]$s)
+  if (-not $s) { return $null }
+  $t = $s.Trim()
+  if (-not $t) { return $null }
+  if ($t -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') { $t = "http://$t" }
+  try {
+    $u = [uri]$t
+    if ($u.Scheme -ne "http" -and $u.Scheme -ne "https") { return $null }
+    return $u
+  } catch { return $null }
+}
+
 $notifyConfig = Load-NotifyConfig
 $token = Get-NotifySetting -name "TELEGRAM_BOT_TOKEN" -cfg $notifyConfig
 $chatId = Get-NotifySetting -name "TELEGRAM_CHAT_ID" -cfg $notifyConfig
+$tgProxyUri = Normalize-ProxyUri (Get-NotifySetting -name "TELEGRAM_PROXY" -cfg $notifyConfig)
 
 if (-not $token -or -not $chatId) {
   Write-BridgeLog "missing token/chat_id; exit"
@@ -100,7 +114,14 @@ function Send-Tg {
       try { $payload.message_thread_id = [int]$threadId } catch {}
     }
     $body = $payload | ConvertTo-Json
-    Invoke-RestMethod -Method Post -Uri $uri -ContentType 'application/json; charset=utf-8' -Body $body | Out-Null
+    $irm = @{
+      Method      = "Post"
+      Uri         = $uri
+      ContentType = 'application/json; charset=utf-8'
+      Body        = $body
+    }
+    if ($tgProxyUri) { $irm.Proxy = $tgProxyUri }
+    Invoke-RestMethod @irm | Out-Null
   } catch {
     Write-BridgeLog ("send fail: " + $_.Exception.Message)
   }
@@ -255,7 +276,9 @@ function Get-TgFilePath {
   if (-not $fileId) { return $null }
   try {
     $uri = "https://api.telegram.org/bot$token/getFile?file_id=$fileId"
-    $resp = Invoke-RestMethod -Method Get -Uri $uri
+    $irm = @{ Method = "Get"; Uri = $uri }
+    if ($tgProxyUri) { $irm.Proxy = $tgProxyUri }
+    $resp = Invoke-RestMethod @irm
     if ($resp -and $resp.result -and $resp.result.file_path) { return $resp.result.file_path }
   } catch {}
   return $null
@@ -284,7 +307,11 @@ function Save-MessageImage {
   $name = "tg_" + $msg.message_id + $ext
   $dest = Join-Path $dir $name
   $downloadUrl = "https://api.telegram.org/file/bot$token/$filePath"
-  try { Invoke-WebRequest -Uri $downloadUrl -OutFile $dest | Out-Null } catch { return $null }
+  try {
+    $iwr = @{ Uri = $downloadUrl; OutFile = $dest }
+    if ($tgProxyUri) { $iwr.Proxy = $tgProxyUri }
+    Invoke-WebRequest @iwr | Out-Null
+  } catch { return $null }
 
   $ref = $dest
   if ($useRelative) { $ref = (".notify\\" + $name) }
@@ -629,7 +656,9 @@ Send-Tg "Telegram 控制桥已启动。发送 /help 查看命令。"
 while ($true) {
   try {
     $uri = "https://api.telegram.org/bot$token/getUpdates?timeout=30&offset=$offset"
-    $resp = Invoke-RestMethod -Method Get -Uri $uri -TimeoutSec 35
+    $irm = @{ Method = "Get"; Uri = $uri; TimeoutSec = 35 }
+    if ($tgProxyUri) { $irm.Proxy = $tgProxyUri }
+    $resp = Invoke-RestMethod @irm
   } catch {
     Write-BridgeLog ("getUpdates fail: " + $_.Exception.Message)
     Start-Sleep -Seconds $PollSeconds

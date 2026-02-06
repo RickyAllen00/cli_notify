@@ -71,6 +71,19 @@ function Get-NotifySetting {
   try { return [Environment]::GetEnvironmentVariable($name, "User") } catch { return $null }
 }
 
+function Normalize-ProxyUri {
+  param([string]$s)
+  if (-not $s) { return $null }
+  $t = $s.Trim()
+  if (-not $t) { return $null }
+  if ($t -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') { $t = "http://$t" }
+  try {
+    $u = [uri]$t
+    if ($u.Scheme -ne "http" -and $u.Scheme -ne "https") { return $null }
+    return $u
+  } catch { return $null }
+}
+
 $notifyConfig = Load-NotifyConfig
 
 # Global mute: env var or disable file
@@ -130,6 +143,7 @@ if (-not $WebhookUrl) { $WebhookUrl = Get-NotifySetting -name "WECOM_WEBHOOK" -c
 # Telegram config from config/env
 $tgToken = Get-NotifySetting -name "TELEGRAM_BOT_TOKEN" -cfg $notifyConfig
 $tgChat = Get-NotifySetting -name "TELEGRAM_CHAT_ID" -cfg $notifyConfig
+$tgProxyUri = Normalize-ProxyUri (Get-NotifySetting -name "TELEGRAM_PROXY" -cfg $notifyConfig)
 
 # Read stdin when invoked as a hook (e.g., Claude Code sends JSON)
 $raw = ""
@@ -521,8 +535,15 @@ if (Test-Path $flagTg) {
       if ($tgThreadId) {
         try { $tgPayload.message_thread_id = [int]$tgThreadId } catch {}
       }
-      $tgPayload = $tgPayload | ConvertTo-Json
-      $resp = Invoke-RestMethod -Method Post -Uri $tgUri -ContentType 'application/json; charset=utf-8' -Body $tgPayload
+      $tgPayloadJson = $tgPayload | ConvertTo-Json
+      $irm = @{
+        Method      = "Post"
+        Uri         = $tgUri
+        ContentType = 'application/json; charset=utf-8'
+        Body        = $tgPayloadJson
+      }
+      if ($tgProxyUri) { $irm.Proxy = $tgProxyUri }
+      $resp = Invoke-RestMethod @irm
       try {
         if ($resp -and $resp.result -and $resp.result.message_id) { return [string]$resp.result.message_id }
       } catch {}

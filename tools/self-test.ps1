@@ -69,6 +69,47 @@ try {
   $exit = Invoke-Pwsh -Command $cmd
   Assert-True -Condition ($exit -eq 0) -Message "notify.ps1 crashed with empty LOCALAPPDATA (exit $exit)"
 
+  Write-Host "TEST: notify.ps1 passes TELEGRAM_PROXY to Invoke-RestMethod"
+  $tgDisabled = Join-Path $binDir "notify.telegram.disabled"
+  $hadTgDisabled = Test-Path $tgDisabled
+  if ($hadTgDisabled) { Remove-Item -Path $tgDisabled -Force -ErrorAction SilentlyContinue }
+  try {
+    $cmdProxy = @'
+$ErrorActionPreference = 'Stop'
+
+$global:irmCalled = $false
+$global:proxySeen = $false
+function global:Invoke-RestMethod {
+  [CmdletBinding()]
+  param(
+    [string]$Method,
+    [string]$Uri,
+    [string]$ContentType,
+    $Body,
+    $Proxy
+  )
+  $global:irmCalled = $true
+  if ($PSBoundParameters.ContainsKey('Proxy') -and $Proxy) { $global:proxySeen = $true }
+  return [pscustomobject]@{ result = [pscustomobject]@{ message_id = 1 } }
+}
+
+$env:TELEGRAM_BOT_TOKEN = 'dummy'
+$env:TELEGRAM_CHAT_ID = '123'
+$env:TELEGRAM_PROXY = 'http://127.0.0.1:7890'
+
+& '__NOTIFY_PATH__' -Source 'Test' -Title 'T' -Body 'B'
+
+if (-not $global:irmCalled) { Write-Error 'Invoke-RestMethod not called'; exit 1 }
+if (-not $global:proxySeen) { Write-Error 'missing -Proxy'; exit 1 }
+exit 0
+'@
+    $cmdProxy = $cmdProxy.Replace("__NOTIFY_PATH__", $notifyPathEsc)
+    $exitProxy = Invoke-Pwsh -Command $cmdProxy
+    Assert-True -Condition ($exitProxy -eq 0) -Message "notify.ps1 did not pass TELEGRAM_PROXY (exit $exitProxy)"
+  } finally {
+    if ($hadTgDisabled) { New-Item -ItemType File -Path $tgDisabled -Force | Out-Null }
+  }
+
   Write-Host "TEST: notify-setup.ps1 Install-Payload works when PSScriptRoot empty"
   $srcDir = New-TempDir -Prefix "cli_notify_payload_src"
   $dstDir = New-TempDir -Prefix "cli_notify_payload_dst"
