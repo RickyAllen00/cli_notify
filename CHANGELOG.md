@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 This project follows Semantic Versioning.
 
+## 0.1.5
+- 修复安装向导在 exe 环境下 $PSScriptRoot 为空导致 Path 参数报错。
+
 ## 0.1.4
 - Fix Telegram reply continuation in topic/thread chats (message_thread_id).
 - Improve reply context fallback when Telegram reply metadata is missing.

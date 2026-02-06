@@ -205,12 +205,17 @@ function Write-EmbeddedFiles {
 
 function Install-Payload {
   param([string]$targetDir)
-  $sourceDir = $PSScriptRoot
-  $hasLocal = Test-Path (Join-Path $sourceDir "notify.ps1")
   if ($EmbeddedFiles.Count -gt 0) {
     Write-EmbeddedFiles -targetDir $targetDir
     return
   }
+  $sourceDir = $PSScriptRoot
+  if (-not $sourceDir) {
+    $self = Get-SelfPath
+    if ($self) { $sourceDir = Split-Path -Parent $self }
+  }
+  if (-not $sourceDir) { throw "无法定位安装源目录。" }
+  $hasLocal = Test-Path (Join-Path $sourceDir "notify.ps1")
   if ($hasLocal) {
     Get-ChildItem -Path $sourceDir -File | Where-Object { $_.Name -ne "notify-setup.ps1" } | ForEach-Object {
       Copy-Item -Path $_.FullName -Destination (Join-Path $targetDir $_.Name) -Force
