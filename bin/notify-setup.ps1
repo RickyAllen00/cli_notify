@@ -210,6 +210,10 @@ function Install-Payload {
     return
   }
   $sourceDir = $PSScriptRoot
+  if ([string]::IsNullOrWhiteSpace($sourceDir)) {
+    $self = Get-SelfPath
+    if ($self) { $sourceDir = Split-Path -Parent $self }
+  }
   $hasLocal = $false
   if (-not [string]::IsNullOrWhiteSpace($sourceDir)) {
     $hasLocal = Test-Path (Join-Path $sourceDir "notify.ps1")

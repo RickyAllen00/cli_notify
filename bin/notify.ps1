@@ -85,13 +85,27 @@ $flagTg = Join-Path $PSScriptRoot "notify.telegram.disabled"
 $flagDebug = Join-Path $PSScriptRoot "notify.debug.enabled"
 $debugEnabled = Test-Path $flagDebug
 
-# Log setup (keep only 1 day) if debug enabled
-$logDir = Join-Path $env:LOCALAPPDATA "notify"
+# State/log directory (session/thread maps + optional debug logs)
+$logDir = $null
 try {
-  if (-not (Test-Path $logDir)) {
-    New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
+  $baseDir = $env:LOCALAPPDATA
+  if ([string]::IsNullOrWhiteSpace($baseDir)) {
+    try { $baseDir = [Environment]::GetFolderPath('LocalApplicationData') } catch { $baseDir = $null }
+  }
+  if ([string]::IsNullOrWhiteSpace($baseDir)) { $baseDir = $env:TEMP }
+  if ([string]::IsNullOrWhiteSpace($baseDir)) { $baseDir = (Get-Location).Path }
+
+  foreach ($name in @("notify", "notify.d", "notify-dir")) {
+    $candidate = Join-Path $baseDir $name
+    if (Test-Path -Path $candidate -PathType Leaf) { continue }
+    if (-not (Test-Path -Path $candidate -PathType Container)) {
+      New-Item -ItemType Directory -Path $candidate -Force -ErrorAction Stop | Out-Null
+    }
+    $logDir = $candidate
+    break
   }
 } catch {}
+if (-not $logDir) { $logDir = "." }
 $logFile = Join-Path $logDir ("notify-" + (Get-Date -Format 'yyyyMMdd') + ".log")
 if ($debugEnabled) {
   try {
