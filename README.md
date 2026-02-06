@@ -23,6 +23,7 @@
 安装向导中选择“现在配置 Telegram”，填入：
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
+- `TELEGRAM_PROXY`（可选，示例：`http://127.0.0.1:7890` 或 `127.0.0.1:7890`）
 
 ### 2) 接入 Codex / Claude（本地）
 **Codex**：在 `~\.codex\config.toml` 里添加
@@ -80,6 +81,7 @@ Windows 侧在安装向导中勾选“远程通知服务端”即可。
 
 ## Troubleshooting
 - Windows 通知无效：确认 BurntToast 安装、系统通知未关闭
+- 托盘图标不显示：检查右下角隐藏图标(^)，以及 `%LOCALAPPDATA%\notify\tray.log`
 - Telegram 无响应：确认 Bot Token / Chat ID 正确
 - 远程图片失败：请安装 OpenSSH Client 或 PuTTY（pscp）并加入 PATH
 

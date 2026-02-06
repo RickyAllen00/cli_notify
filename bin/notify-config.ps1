@@ -78,6 +78,16 @@ function Update-EnvFile {
   Set-Content -Path $path -Value $out -Encoding UTF8
 }
 
+function Normalize-ProxyUrl {
+  param([string]$proxy)
+  if ([string]::IsNullOrWhiteSpace($proxy)) { return "" }
+  $p = $proxy.Trim()
+  if ($p -notmatch '://') {
+    if ($p -match '^[^:]+:\d+$') { return ("http://" + $p) }
+  }
+  return $p
+}
+
 function Get-ConfigPath {
   if ($env:NOTIFY_CONFIG_PATH) { return $env:NOTIFY_CONFIG_PATH }
   return (Join-Path $PSScriptRoot ".env")
@@ -173,7 +183,7 @@ $cfg = Read-EnvFile -path $configPath
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Notify 配置"
-$form.Size = New-Object System.Drawing.Size(640, 700)
+$form.Size = New-Object System.Drawing.Size(640, 740)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -183,7 +193,7 @@ $form.Font = $font
 
 $gbChannel = New-Object System.Windows.Forms.GroupBox
 $gbChannel.Text = "通知通道"
-$gbChannel.SetBounds(12, 12, 600, 180)
+$gbChannel.SetBounds(12, 12, 600, 220)
 
 $lblWecom = New-Object System.Windows.Forms.Label
 $lblWecom.Text = "企微 Webhook"
@@ -212,16 +222,31 @@ $tbTgChat = New-Object System.Windows.Forms.TextBox
 $tbTgChat.SetBounds(140, 104, 430, 24)
 $tbTgChat.Text = (Get-Value -name "TELEGRAM_CHAT_ID" -cfg $cfg)
 
+$lblTgProxy = New-Object System.Windows.Forms.Label
+$lblTgProxy.Text = "Proxy(可选)"
+$lblTgProxy.AutoSize = $true
+$lblTgProxy.Location = New-Object System.Drawing.Point(16, 146)
+
+$tbTgProxy = New-Object System.Windows.Forms.TextBox
+$tbTgProxy.SetBounds(140, 142, 430, 24)
+$tbTgProxy.Text = (Get-Value -name "TELEGRAM_PROXY" -cfg $cfg)
+
 $lnkTgHelp = New-Object System.Windows.Forms.LinkLabel
 $lnkTgHelp.Text = "如何获取 Bot Token / Chat ID"
 $lnkTgHelp.AutoSize = $true
-$lnkTgHelp.Location = New-Object System.Drawing.Point(140, 140)
+$lnkTgHelp.Location = New-Object System.Drawing.Point(140, 176)
 
-$gbChannel.Controls.AddRange(@($lblWecom,$tbWecom,$lblTgToken,$tbTgToken,$lblTgChat,$tbTgChat,$lnkTgHelp))
+$gbChannel.Controls.AddRange(@(
+  $lblWecom,$tbWecom,
+  $lblTgToken,$tbTgToken,
+  $lblTgChat,$tbTgChat,
+  $lblTgProxy,$tbTgProxy,
+  $lnkTgHelp
+))
 
 $gbRemote = New-Object System.Windows.Forms.GroupBox
 $gbRemote.Text = "远程通知服务端"
-$gbRemote.SetBounds(12, 205, 600, 210)
+$gbRemote.SetBounds(12, 245, 600, 210)
 
 $cbRemote = New-Object System.Windows.Forms.CheckBox
 $cbRemote.Text = "启用远程通知服务端"
@@ -278,7 +303,7 @@ $gbRemote.Controls.AddRange(@(
 
 $gbAuto = New-Object System.Windows.Forms.GroupBox
 $gbAuto.Text = "开机自启"
-$gbAuto.SetBounds(12, 425, 600, 120)
+$gbAuto.SetBounds(12, 465, 600, 120)
 
 $cbAutoTray = New-Object System.Windows.Forms.CheckBox
 $cbAutoTray.Text = "托盘菜单"
@@ -302,11 +327,11 @@ $gbAuto.Controls.AddRange(@($cbAutoTray,$cbAutoTg,$cbAutoServer))
 
 $btnSave = New-Object System.Windows.Forms.Button
 $btnSave.Text = "保存"
-$btnSave.SetBounds(430, 565, 80, 30)
+$btnSave.SetBounds(430, 605, 80, 30)
 
 $btnCancel = New-Object System.Windows.Forms.Button
 $btnCancel.Text = "取消"
-$btnCancel.SetBounds(520, 565, 80, 30)
+$btnCancel.SetBounds(520, 605, 80, 30)
 
 $form.Controls.AddRange(@($gbChannel,$gbRemote,$gbAuto,$btnSave,$btnCancel))
 
@@ -358,6 +383,7 @@ $btnSave.Add_Click({
   $updates["WECOM_WEBHOOK"] = $tbWecom.Text.Trim()
   $updates["TELEGRAM_BOT_TOKEN"] = $tbTgToken.Text.Trim()
   $updates["TELEGRAM_CHAT_ID"] = $tbTgChat.Text.Trim()
+  $updates["TELEGRAM_PROXY"] = (Normalize-ProxyUrl $tbTgProxy.Text)
 
   if ($cbRemote.Checked) {
     $port = [int]$nudPort.Value

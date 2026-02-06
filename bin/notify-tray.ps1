@@ -33,6 +33,135 @@ function Write-TrayLog {
   try { Add-Content -Path $logFile -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + " " + $msg) } catch {}
 }
 
+function Read-EnvFile {
+  param([string]$path)
+  $map = @{}
+  if (-not (Test-Path $path)) { return $map }
+  foreach ($line in Get-Content -Path $path -ErrorAction SilentlyContinue) {
+    $t = $line.Trim()
+    if (-not $t -or $t.StartsWith("#")) { continue }
+    if ($t -match '^\s*export\s+') { $t = $t -replace '^\s*export\s+','' }
+    if ($t -match '^\s*([^=]+?)\s*=\s*(.*)\s*$') {
+      $key = $Matches[1].Trim()
+      $val = $Matches[2].Trim()
+      if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+        if ($val.Length -ge 2) { $val = $val.Substring(1, $val.Length - 2) }
+      }
+      if ($key) { $map[$key] = $val }
+    }
+  }
+  return $map
+}
+
+function Format-EnvValue {
+  param([string]$val)
+  if ($null -eq $val) { return "" }
+  $v = [string]$val
+  if ($v -match '\s|#') { return '"' + $v + '"' }
+  return $v
+}
+
+function Update-EnvFile {
+  param([string]$path, [hashtable]$updates)
+  $lines = @()
+  if (Test-Path $path) { $lines = Get-Content -Path $path -ErrorAction SilentlyContinue }
+  $seen = @{}
+  $out = @()
+  foreach ($line in $lines) {
+    if ($line -match '^\s*([^=]+?)\s*=' ) {
+      $k = $Matches[1].Trim()
+      if ($updates.ContainsKey($k)) {
+        $out += ($k + "=" + (Format-EnvValue $updates[$k]))
+        $seen[$k] = $true
+        continue
+      }
+    }
+    $out += $line
+  }
+  foreach ($k in $updates.Keys) {
+    if (-not $seen.ContainsKey($k)) {
+      $out += ($k + "=" + (Format-EnvValue $updates[$k]))
+    }
+  }
+  $dir = Split-Path -Parent $path
+  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+  Set-Content -Path $path -Value $out -Encoding UTF8
+}
+
+function Normalize-ProxyUrl {
+  param([string]$proxy)
+  if ([string]::IsNullOrWhiteSpace($proxy)) { return "" }
+  $p = $proxy.Trim()
+  if ($p -notmatch '://') {
+    if ($p -match '^[^:]+:\d+$') { return ("http://" + $p) }
+  }
+  return $p
+}
+
+function Get-ConfigPath {
+  if ($env:NOTIFY_CONFIG_PATH) { return $env:NOTIFY_CONFIG_PATH }
+  try {
+    $reg = Get-ItemProperty -Path "HKCU:\Environment" -Name "NOTIFY_CONFIG_PATH" -ErrorAction SilentlyContinue
+    if ($reg -and $reg.NOTIFY_CONFIG_PATH) { return $reg.NOTIFY_CONFIG_PATH }
+  } catch {}
+  return (Join-Path $bin ".env")
+}
+
+function Show-TgProxyDialog {
+  param([System.Windows.Forms.NotifyIcon]$NotifyIcon)
+
+  $cfgPath = Get-ConfigPath
+  $cfg = Read-EnvFile -path $cfgPath
+  $current = ""
+  if ($cfg -and $cfg.ContainsKey("TELEGRAM_PROXY")) { $current = [string]$cfg["TELEGRAM_PROXY"] }
+
+  $f = New-Object System.Windows.Forms.Form
+  $f.Text = "Telegram 代理"
+  $f.Size = New-Object System.Drawing.Size(520, 190)
+  $f.StartPosition = "CenterScreen"
+  $f.FormBorderStyle = "FixedDialog"
+  $f.MaximizeBox = $false
+
+  $lbl = New-Object System.Windows.Forms.Label
+  $lbl.Text = "Proxy URL（留空=直连）"
+  $lbl.AutoSize = $true
+  $lbl.Location = New-Object System.Drawing.Point(16, 20)
+
+  $tb = New-Object System.Windows.Forms.TextBox
+  $tb.SetBounds(16, 45, 470, 24)
+  $tb.Text = $current
+
+  $tip = New-Object System.Windows.Forms.Label
+  $tip.Text = "示例：http://127.0.0.1:7890"
+  $tip.AutoSize = $true
+  $tip.Location = New-Object System.Drawing.Point(16, 75)
+
+  $btnOk = New-Object System.Windows.Forms.Button
+  $btnOk.Text = "保存"
+  $btnOk.SetBounds(320, 115, 80, 28)
+
+  $btnCancel = New-Object System.Windows.Forms.Button
+  $btnCancel.Text = "取消"
+  $btnCancel.SetBounds(406, 115, 80, 28)
+
+  $btnOk.Add_Click({
+    try {
+      Update-EnvFile -path $cfgPath -updates @{ TELEGRAM_PROXY = (Normalize-ProxyUrl $tb.Text) }
+      try { if ($NotifyIcon) { $NotifyIcon.ShowBalloonTip(3000, "已保存", "Telegram 代理已更新", [System.Windows.Forms.ToolTipIcon]::Info) } } catch {}
+      Write-TrayLog "proxy updated"
+    } catch {
+      try { [System.Windows.Forms.MessageBox]::Show("保存失败：" + $_.Exception.Message, "错误") } catch {}
+      Write-TrayLog ("proxy save fail: " + $_.Exception.Message)
+      return
+    }
+    $f.Close()
+  })
+  $btnCancel.Add_Click({ $f.Close() })
+
+  $f.Controls.AddRange(@($lbl,$tb,$tip,$btnOk,$btnCancel))
+  [void]$f.ShowDialog()
+}
+
 # Single-instance guard (per-user)
 $mutex = $null
 $mutexCreated = $false
@@ -116,6 +245,7 @@ try {
   $debugItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $testItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $configItem = New-Object System.Windows.Forms.ToolStripMenuItem
+  $proxyItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $exitItem = New-Object System.Windows.Forms.ToolStripMenuItem
 
   $statusItem.Enabled = $false
@@ -132,6 +262,7 @@ try {
   $debugItem.Text = "调试日志"
   $testItem.Text = "发送测试"
   $configItem.Text = "打开配置"
+  $proxyItem.Text = "Telegram 代理"
   $exitItem.Text = "退出"
 
   function Refresh-UI {
@@ -207,6 +338,10 @@ try {
     }
   })
 
+  $proxyItem.Add_Click({
+    Show-TgProxyDialog -NotifyIcon $icon
+  })
+
   function Quit-Tray {
     try { $icon.Visible = $false } catch {}
     try { $menuTimer.Stop(); $menuTimer.Dispose() } catch {}
@@ -229,6 +364,7 @@ try {
     (New-Object System.Windows.Forms.ToolStripSeparator),
     $testItem,
     $configItem,
+    $proxyItem,
     $exitItem
   ))
 

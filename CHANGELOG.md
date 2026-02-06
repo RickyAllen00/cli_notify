@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file.
 This project follows Semantic Versioning.
 
+## 0.1.6
+- 安装完成后自动启动托盘/服务（避免“装完没托盘、没通知”）。
+- Telegram 支持代理配置（安装器/配置页/托盘菜单），适配网络受限环境。
+- Windows 通知增加 WinRT 原生 Toast 兜底（未安装 BurntToast 也可通知）。
+
 ## 0.1.5
 - 修复安装向导在 exe 环境下 $PSScriptRoot 为空导致 Path 参数报错。
 

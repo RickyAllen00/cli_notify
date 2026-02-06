@@ -117,6 +117,7 @@ function Ensure-EnvTemplate {
     "WECOM_WEBHOOK=",
     "TELEGRAM_BOT_TOKEN=",
     "TELEGRAM_CHAT_ID=",
+    "TELEGRAM_PROXY=",
     "NOTIFY_SERVER_TOKEN=",
     "NOTIFY_SERVER_PREFIX=",
     "NOTIFY_SERVER_PORT=",
@@ -326,7 +327,7 @@ $gbWecom.Controls.AddRange(@($cbWecom,$lblWecom,$tbWecom))
 
 $gbTg = New-Object System.Windows.Forms.GroupBox
 $gbTg.Text = "Telegram"
-$gbTg.SetBounds(12, 230, 640, 150)
+$gbTg.SetBounds(12, 230, 640, 190)
 
 $cbTg = New-Object System.Windows.Forms.CheckBox
 $cbTg.Text = "现在配置 Telegram"
@@ -356,7 +357,16 @@ $tbTgChat = New-Object System.Windows.Forms.TextBox
 $tbTgChat.SetBounds(100, 94, 520, 24)
 $tbTgChat.Enabled = $false
 
-$gbTg.Controls.AddRange(@($cbTg,$lnkTgHelp,$lblTgToken,$tbTgToken,$lblTgChat,$tbTgChat))
+$lblTgProxy = New-Object System.Windows.Forms.Label
+$lblTgProxy.Text = "Proxy(可选)"
+$lblTgProxy.AutoSize = $true
+$lblTgProxy.Location = New-Object System.Drawing.Point(16, 134)
+
+$tbTgProxy = New-Object System.Windows.Forms.TextBox
+$tbTgProxy.SetBounds(100, 130, 520, 24)
+$tbTgProxy.Enabled = $false
+
+$gbTg.Controls.AddRange(@($cbTg,$lnkTgHelp,$lblTgToken,$tbTgToken,$lblTgChat,$tbTgChat,$lblTgProxy,$tbTgProxy))
 
 $gbRemote = New-Object System.Windows.Forms.GroupBox
 $gbRemote.Text = "远程通知服务端 / 远程服务器"
@@ -513,10 +523,52 @@ function Update-RemoteSettings {
 }
 
 function Refresh-Layout {
+  $gbInstall.Top = 12
+  $gbWecom.Top = $gbInstall.Bottom + 10
+  $gbTg.Top = $gbWecom.Bottom + 10
+  $gbRemote.Top = $gbTg.Bottom + 10
   $gbAuto.Top = $gbRemote.Bottom + 10
   $btnInstall.Top = $gbAuto.Bottom + 10
   $btnCancel.Top = $btnInstall.Top
   $form.ClientSize = New-Object System.Drawing.Size(680, ($btnInstall.Bottom + 20))
+}
+
+function Normalize-ProxyUrl {
+  param([string]$proxy)
+  if ([string]::IsNullOrWhiteSpace($proxy)) { return "" }
+  $p = $proxy.Trim()
+  if ($p -match '^[^:]+:\d+$' -and $p -notmatch '://') { return ("http://" + $p) }
+  return $p
+}
+
+function Start-InstalledProcesses {
+  param(
+    [string]$targetDir,
+    [bool]$startTray,
+    [bool]$startTelegramBridge,
+    [bool]$startServer
+  )
+
+  if ($startTray) {
+    $trayVbs = Join-Path $targetDir "notify-tray.vbs"
+    if (Test-Path $trayVbs) {
+      try { Start-Process -FilePath "wscript.exe" -ArgumentList "`"$trayVbs`"" -WindowStyle Hidden | Out-Null } catch {}
+    }
+  }
+
+  if ($startTelegramBridge) {
+    $tgVbs = Join-Path $targetDir "telegram-bridge.vbs"
+    if (Test-Path $tgVbs) {
+      try { Start-Process -FilePath "wscript.exe" -ArgumentList "`"$tgVbs`"" -WindowStyle Hidden | Out-Null } catch {}
+    }
+  }
+
+  if ($startServer) {
+    $serverVbs = Join-Path $targetDir "notify-server.vbs"
+    if (Test-Path $serverVbs) {
+      try { Start-Process -FilePath "wscript.exe" -ArgumentList "`"$serverVbs`"" -WindowStyle Hidden | Out-Null } catch {}
+    }
+  }
 }
 
 function Set-ServersPanel {
@@ -564,6 +616,7 @@ $cbWecom.Add_CheckedChanged({ $tbWecom.Enabled = $cbWecom.Checked })
 $cbTg.Add_CheckedChanged({
   $tbTgToken.Enabled = $cbTg.Checked
   $tbTgChat.Enabled = $cbTg.Checked
+  $tbTgProxy.Enabled = $cbTg.Checked
 })
 $lnkTgHelp.Add_Click({
   $msg = @(
@@ -634,6 +687,7 @@ $btnInstall.Add_Click({
   if ($cbTg.Checked) {
     $updates["TELEGRAM_BOT_TOKEN"] = $tbTgToken.Text.Trim()
     $updates["TELEGRAM_CHAT_ID"] = $tbTgChat.Text.Trim()
+    $updates["TELEGRAM_PROXY"] = (Normalize-ProxyUrl $tbTgProxy.Text)
   }
 
   $remotePort = [int]$nudPort.Value
@@ -698,7 +752,12 @@ $btnInstall.Add_Click({
     }
   }
 
-  [System.Windows.Forms.MessageBox]::Show("安装完成。你可以从托盘菜单打开配置。", "完成")
+  Start-InstalledProcesses -targetDir $targetDir `
+    -startTray $cbAutoTray.Checked `
+    -startTelegramBridge $cbTg.Checked `
+    -startServer $cbAutoServer.Checked
+
+  [System.Windows.Forms.MessageBox]::Show("安装完成。已尝试启动托盘/服务。若未看到托盘图标，请检查右下角隐藏图标(^)或重新登录。", "完成")
   $form.Close()
 })
 

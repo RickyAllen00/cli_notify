@@ -106,12 +106,23 @@ function Write-NotifyLog {
   } catch {}
 }
 
+function Normalize-ProxyUrl {
+  param([string]$proxy)
+  if ([string]::IsNullOrWhiteSpace($proxy)) { return $null }
+  $p = $proxy.Trim()
+  if ($p -notmatch '://') {
+    if ($p -match '^[^:]+:\d+$') { return ("http://" + $p) }
+  }
+  return $p
+}
+
 # Allow reading webhook from config/User env if not present
 if (-not $WebhookUrl) { $WebhookUrl = Get-NotifySetting -name "WECOM_WEBHOOK" -cfg $notifyConfig }
 
 # Telegram config from config/env
 $tgToken = Get-NotifySetting -name "TELEGRAM_BOT_TOKEN" -cfg $notifyConfig
 $tgChat = Get-NotifySetting -name "TELEGRAM_CHAT_ID" -cfg $notifyConfig
+$tgProxy = Normalize-ProxyUrl (Get-NotifySetting -name "TELEGRAM_PROXY" -cfg $notifyConfig)
 
 # Read stdin when invoked as a hook (e.g., Claude Code sends JSON)
 $raw = ""
@@ -457,7 +468,30 @@ if (Test-Path $flagWin) {
       }
       Write-NotifyLog -Channel "windows" -Status "ok" -Message $Title
     } else {
-      Write-NotifyLog -Channel "windows" -Status "skip" -Message "BurntToast not installed"
+      function Send-NativeToast {
+        param([string]$Title, [string]$Body)
+        try {
+          [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+          $template = [Windows.UI.Notifications.ToastTemplateType]::ToastText02
+          $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template)
+          $nodes = $xml.GetElementsByTagName("text")
+          if ($nodes.Count -ge 1) { $nodes.Item(0).AppendChild($xml.CreateTextNode($Title)) | Out-Null }
+          if ($nodes.Count -ge 2) { $nodes.Item(1).AppendChild($xml.CreateTextNode($Body)) | Out-Null }
+          $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+          $toast.ExpirationTime = (Get-Date).AddSeconds(5)
+          $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Windows PowerShell")
+          $notifier.Show($toast)
+          return $true
+        } catch {
+          return $false
+        }
+      }
+
+      if (Send-NativeToast -Title $Title -Body $Body) {
+        Write-NotifyLog -Channel "windows" -Status "ok" -Message $Title
+      } else {
+        Write-NotifyLog -Channel "windows" -Status "skip" -Message "BurntToast not installed"
+      }
     }
   } catch {
     Write-NotifyLog -Channel "windows" -Status "fail" -Message $_.Exception.Message
@@ -504,7 +538,9 @@ if (Test-Path $flagTg) {
         try { $tgPayload.message_thread_id = [int]$tgThreadId } catch {}
       }
       $tgPayload = $tgPayload | ConvertTo-Json
-      $resp = Invoke-RestMethod -Method Post -Uri $tgUri -ContentType 'application/json; charset=utf-8' -Body $tgPayload
+      $irmArgs = @{ Method = 'Post'; Uri = $tgUri; ContentType = 'application/json; charset=utf-8'; Body = $tgPayload }
+      if ($tgProxy) { $irmArgs.Proxy = $tgProxy }
+      $resp = Invoke-RestMethod @irmArgs
       try {
         if ($resp -and $resp.result -and $resp.result.message_id) { return [string]$resp.result.message_id }
       } catch {}
